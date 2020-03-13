@@ -35,7 +35,7 @@ logPnse = -(Ydff-ygrid).^2/(2*nsevar)-.5*log(2*pi*nsevar);
 Xproj = X(2:end,:)*prs; % linear predictor
 poissConst = gammaln(ygrid+1);  % constant from Poisson dist
 
-% Compute the 
+% Compute the Poisson term and marginalize over spike counts
 switch nargout
 
     case {0,1} % --- Compute neglogli -----------------------
