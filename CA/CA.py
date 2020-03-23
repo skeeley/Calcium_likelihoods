@@ -28,7 +28,7 @@ class CA_Emissions():
     def __init__(
         self,
         dt: float = 0.03333333,
-        tau: int = 1,
+        tau: int = 10,
         alpha: int = 1,
         max_spk: int = 10,
         Gauss_sigma: float = 0.2,
@@ -78,7 +78,7 @@ class CA_Emissions():
         self.data = data
 
 
-    def sample_data(self, rate, tau_samp = self.tau, alpha_samp = samp.alpha, sigma_samp = self.Gauss_sigma):
+    def sample_data(self, rate, tau_samp = 1, alpha_samp = 1, sigma_samp = 0.05):
         '''
         Generate simulated data with default class params. Feel free to change if needed. Can be AR1 or AR2
         '''
@@ -87,19 +87,23 @@ class CA_Emissions():
             raise ValueError("rate should be the same length as T in the calcium class, got {0}".format(np.shape(data)[-1]))
 
 
-        spikes = npr.poisson(rate)
+        spikes = onp.random.poisson(rate)
 
         if self.AR1: 
-            z= lfilter(alpha_samp,[1,-np.exp(-self.dt/tau_samp)],spikes)
-            trace = z + np.sqrt(sigma_samp)*np.random.randn(np.size(z))#add noise
+            z= lfilter([alpha_samp],[1,-np.exp(-self.dt/tau_samp)],spikes)
+            
 
 
 
         elif self.AR2:  
-            a = 0
+            q = [exp(-self.dt/tau_samp),exp(-self.dt/tau_samp_b)];
+            a_true = poly(q);
+            z = filter(1,a_true,spcounts);
             ##### To Do: AR2 PROCESS HERE!
 
-        return trace
+        trace = z + onp.sqrt(sigma_samp)*onp.random.randn(onp.size(z))#add noise
+
+        return trace, spikes
 
 
     def log_likelihood(self,rate_param, S = 10):
