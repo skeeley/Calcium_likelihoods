@@ -62,8 +62,8 @@ class CA_Emissions():
 
 
         mean_functions = dict(
-            log=lambda x: np.exp(x) * self.bin_size,
-            softplus= lambda x: softplus(x) * self.bin_size
+            log=lambda x: np.exp(x) * self.dt,
+            softplus= lambda x: softplus(x) * self.dt
             )
         self.mean = mean_functions[link]
 
@@ -78,7 +78,7 @@ class CA_Emissions():
         self.data = data
 
 
-    def sample_data(self, rate ):
+    def sample_data(self, rate):
         '''
         Generate simulated data with default class params. Feel free to change if needed. Can be AR1 or AR2
         '''
@@ -108,7 +108,7 @@ class CA_Emissions():
 
     def log_likelihood(self,params, S = 10, learn_hyparams = False):
         try:
-            self.data()
+            self.data
         except AttributeError:
             print("please set data first")
 
@@ -116,25 +116,26 @@ class CA_Emissions():
         if self.AR1: 
 
             b = np.zeros([self.T-1,1+S])
-            f1 =  b + self.data[:-1,None]
-            f0 =  b  + self.data[1:,None]
+            f1 =  b + self.data[0][:-1,None]
+            f0 =  b  + self.data[0][1:,None]
 
-            spk_vec = np.arange(S+1) 
+            spk_vec = np.array([np.arange(S+1)].T) 
 
             spk_mat =spk_vec*np.ones(np.shape(f1))
 
             if learn_hyparams:
-                Gaussparam, tauparam, alphaparam = params[-3:]
-                mu = f1*np.exp(-self.dt/tauparam)+alphaparam*spk_mat
-                self.Gauss_ll = log_gaussian_1D(f0, mu, Gaussparam) #set Gaussian part
+                self.Gauss_sigma, self.tau, self.alpha = params[-3:]
 
-            else:
-                mu = f1*np.exp(-self.dt/self.tau)+self.alpha*spk_mat
-                self.Gauss_ll = log_gaussian_1D(f0, mu, self.Gauss_sigma) #set Gaussian part
+          
+
+
+            ########### general purpose AR #############         
+            mu = f1*np.exp(-self.dt/self.tau)+self.alpha*spk_mat
+            self.Gauss_ll = log_gaussian_1D(f0, mu, self.Gauss_sigma) #set Gaussian part
 
 
             ##### do Poiss part 
-            rate = self.mean(params[:(self.T-1)]) #convert to rate given dt
+            rate = self.mean(params[:(self.T)]) #convert to rate given dt
 
             #  Compute Poisson log-probability for each rate, for each spike count in spkvect
             logpoisspdf_mat = log_poisson_1D(spk_vec, rate)

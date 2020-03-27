@@ -9,6 +9,7 @@ import jax.numpy as np
 import numpy as onp
 from jax import grad, jit, vmap
 from jax.experimental import optimizers
+from jax import random
 
 
 import matplotlib.pyplot as plt
@@ -16,15 +17,87 @@ import matplotlib
 matplotlib.interactive(True)
 
 from CA.CA import CA_Emissions
-from CA.misc import bbvi
+#from CA.misc import bbvi, make_cov
 
 
 
-obj = CA_Emissions(tau = .05, Gauss_sigma = 0.01, T = 1000) 
+ca_obj = CA_Emissions(tau = .05, Gauss_sigma = 0.01, T = 1000) 
 
-rate = np.sin(np.arange(0,10,.01))
+rate = np.sin(np.arange(0,10,.01))+1
 
-samp_data = obj.sample_data(rate+1)
+samp_data = ca_obj.sample_data(rate)
+
+ca_obj.set_data(samp_data)
+
+
+
+# def normal_sample(key, shape):
+#     """Convenience function for quasi-stateful RNG."""
+#     new_key, sub_key = random.split(key)
+#     return new_key, random.normal(sub_key, shape)
+
+
+# normal_sample = jax.jit(normal_sample, static_argnums=(1,))
+
+
+
+def make_cov(N, rh, len_sc):
+  M1 = np.array([range(N)])- np.transpose(np.array([range(N)]))
+  K = rh*np.exp(-(np.square(M1)/(2*np.square(len_sc))))
+  return K
+
+
+
+def bbvi(logprob, N, num_samples):
+    """Implements http://arxiv.org/abs/1401.0118, and uses the
+    local reparameterization trick from http://arxiv.org/abs/1506.02557
+
+    Structure of function taken from: https://github.com/HIPS/autograd/blob/master/examples/black_box_svi.py
+	
+	inputs: 
+	logprob : joint likelihood function - Form of this function must follow a convention -
+			 - first argument is variable being sampled over (x)
+			 - second argument is an indicator for iteration number (t)
+			 - third argument is a vector of hyperparams we wish to also optimize (hyperparams)
+			
+	N: number of variational parameters
+	num_samples: Number of samples 
+	n_hyperparams: number of hyperparams to jointly optimize 
+
+	outputs:
+	Variational_objective: the elbo
+	gradient: Gradient of elbo
+	unpack_params: optional function which will decompose mean, variance, and hyperparams from vector params
+    """
+
+
+    def unpack_params(params):
+        # Variational dist is a diagonal Gaussian followed by hyperparameters
+        mean, log_std, hyperparams = params[:N], params[N:2*N], params[2*N:]
+
+        return mean, log_std, hyperparams
+
+    def gaussian_entropy(log_std):
+        return 0.5 * N * (1.0 + np.log(2*np.pi)) + np.sum(log_std)
+
+    key = random.PRNGKey(10003)
+
+    def variational_objective(params):
+        """Provides a stochastic estimate of the variational lower bound."""
+        mean, log_std, hyperparams = unpack_params(params) 
+        samples = random.normal(key, [num_samples, N]) * np.exp(log_std) + mean #Generate samples using reparam trick
+        ### use jax vmap to calculate over samples here
+        #handle for batched params
+        logprob_samp  = lambda samples: logprob(samples, hyperparams)
+        batched_logprob = vmap(logprob_samp)
+        lower_bound = gaussian_entropy(log_std) + np.mean(batched_logprob(samples)) #return elbo and hyperparams (loadings and length scale)
+
+        return -lower_bound
+
+    gradient = grad(variational_objective)
+
+    return variational_objective, gradient, unpack_params
+
 
 
 def calc_gp_prior(x_samps, K):
@@ -37,18 +110,50 @@ def calc_gp_prior(x_samps, K):
 	Kinv = np.linalg.inv(K)
 	logprior -(1/2)*(np.einsum('ij,ij->i',np.matmul(x_samp,Kinv), x_samp)+ np.linalg.slogdet(K)[1]) 
 
-  return log_prior
+	return log_prior
 
 
-def log_joint(x_samples, t,  hyperparams, obj):
+def log_joint(ca_params, hyperparams, ca_obj):
 
-	ll =obj.log_likelihood(x_samples)
+	ll =ca_obj.log_likelihood(ca_params)
+	K = make_cov(ca_obj.T, hyperparams[0], hyperparams[1])
 	log_prior = calc_gp_prior(x_samples, K)
 	return log_prior + ll
 
 
-logprob = lambda samples, t, hyperparams: log_joint(samples, t, hyperparams)
+##### set up optimization
 
+num_samples = 5
+
+rate_length = ca_obj.T
+loc = np.zeros(rate_length, np.float32)
+log_scale = -10* np.ones(rate_length, np.float32)
+
+
+init_ls = np.array([20], np.float32)
+init_rho = np.array([5], np.float32)
+
+full_params = np.concatenate([loc, log_scale,init_ls, init_rho])
+
+
+log_joint = lambda samples, hyperparams: log_joint(samples, hyperparams, ca_obj)
+varobjective, gradient, unpack_params = bbvi(log_joint, rate_length, num_samples)
+
+varobjective(full_params)
+
+opt_init, opt_update = optimizers.adam(step_size=1e-3)
+opt_state = opt_init(net_params)
+
+
+@jit
+def step(i, opt_state, x1, y1):
+    p = optimizers.get_params(opt_state)
+    g = grad(loss)(p, x1, y1)
+    return opt_update(i, g, opt_state)
+
+for i in range(100):
+    opt_state = step(i, opt_state, xrange_inputs, targets)
+net_params = optimizers.get_params(opt_state)
 
 
 
