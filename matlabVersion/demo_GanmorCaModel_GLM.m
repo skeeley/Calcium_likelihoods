@@ -7,7 +7,18 @@
 addpath nlfuns/
 addpath xtras/
 
-% Set up model
+% Set calcimum model hyperparams
+tau = 10; % decay in one time bin
+alpha = 50; % gain
+signse = 1.5; % stdev of Gaussian noise (in spike train space)
+nsevar = signse.^2; % variance of noise
+hprs = [tau,alpha,nsevar]'; % model hyperparams
+
+% Set grid of spike counts to consider
+maxY = 10; % Max spike count to consider (increase if necessary)
+ygrid = 0:maxY; % grid of spike counts to consider
+
+% Set up GLM
 nX = 19;  % dimension of stimulus (without DC term)
 nXtot = nX+1; % total # of dimensions (with DC)
 nT = 50000; % number of time bins
@@ -18,16 +29,6 @@ wfilt = conv2(randn(nX,1),normpdf((1:nX)',nX/2, 2),'same'); % random smooth weig
 wDC = -2.5; % DC term
 wts = [wDC; 2*wfilt./norm(wfilt)];
 
-% Set calcimum model hyperparams
-tau = 10; % decay in one time bin
-alpha = 50; % gain
-signse = 1.5; % stdev of Gaussian noise (in spike train space)
-nsevar = signse.^2; % variance of noise
-hprs = [tau,alpha,nsevar]'; % model hyperparams
-
-% Set grid of spike counts to consider
-maxY = 10; % Max spike count to consider
-ygrid = 0:maxY; % grid of spike counts to consider
 
 %% Generate simulated dataset
 
