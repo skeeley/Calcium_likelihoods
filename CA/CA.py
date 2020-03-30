@@ -6,15 +6,15 @@ from __future__ import print_function
 
 from scipy.signal import lfilter
 
-
 import jax
+import jax.scipy as sp
 import jax.numpy as np
 # Current convention is to import original numpy as "onp"
 import numpy as onp
 
 
 def log_poisson_1D(y, rate):
-    return y * np.log(rate) - rate - gammaln(y+1)
+    return y.T * np.log(rate) - rate - sp.special.gammaln(y+1)
 
 def log_gaussian_1D(y, mu, sig2):
     return -0.5 * np.log(2.0 * np.pi * sig2) -0.5 * (y - mu)**2 / sig2
@@ -28,7 +28,7 @@ class CA_Emissions():
     def __init__(
         self,
         dt: float = 0.03333333,
-        tau: int = 10,
+        AR_params: int = 10,
         alpha: int = 1,
         max_spk: int = 10,
         Gauss_sigma: float = 0.2,
@@ -42,8 +42,8 @@ class CA_Emissions():
 
         if dt <= 0:
             raise ValueError("dt must be positive, got {0}".format(dt))
-        if tau <= 0:
-            raise ValueError("Calcium trace timescale must be positive, got {0}".format(tau))
+        if  AR_params <= 0:
+            raise ValueError("Calcium trace timescale must be positive, got {0}".format AR_params))
         if alpha <= 0.0:
             raise ValueError("a bound must be positive, got {0}".format(alpha))
         if max_spk <= 0:
@@ -51,14 +51,14 @@ class CA_Emissions():
 
 
         self.dt = dt
-        self.tau = tau
+        self.AR_params =  AR_params
         self.alpha = alpha
         self.max_spk = max_spk
         self.Gauss_sigma = Gauss_sigma
 
         self.T = T
-        self.AR1 = AR1
-        self.AR2 = AR2
+        # self.AR1 = AR1
+        # self.AR2 = AR2
 
 
         mean_functions = dict(
@@ -69,7 +69,7 @@ class CA_Emissions():
 
     @property
     def params(self):
-        return self.dt, self.alpha, self.Gauss_sigma, self.T, self.AR1, self.AR2  
+        return self.dt, self.alpha, self.Gauss_sigma, self.T, self.AR_params
 
     def set_data(self, data):
 
@@ -78,7 +78,7 @@ class CA_Emissions():
         self.data = data
 
 
-    def sample_data(self, rate):
+    def sample_data(self, rate, AR = 1):
         '''
         Generate simulated data with default class params. Feel free to change if needed. Can be AR1 or AR2
         '''
@@ -89,17 +89,16 @@ class CA_Emissions():
 
         spikes = onp.random.poisson(rate)
 
-        if self.AR1: 
-            z= lfilter([self.alpha],[1,-np.exp(-self.dt/self.tau)],spikes)
-            
+
+        roots = np.exp(-self.dt/self.AR_params) ### here self.AR_params is an n-length vector where n is the AR process order
+        coeffs = np.poly(roots) #find coefficients with of a polynomial with roots of params
+        z = lfilter([self.alpha],coeffs,spk_counts) #generate AR-n process with inputs spk_counts, where self.alpha is the CA increase due to a spike
 
 
-
-        elif self.AR2:  
-            q = [exp(-self.dt/tau_samp),exp(-self.dt/tau_samp_b)];
-            a_true = poly(q);
-            z = filter(1,a_true,spcounts);
-            ##### To Do: AR2 PROCESS HERE!
+        # q = [exp(-self.dt/tau_samp),exp(-self.dt/tau_samp_b)]
+        # a_true = onp.poly(q)
+        # z = filter(1,a_true,spcounts);
+        # ##### To Do: AR2 PROCESS HERE!
 
         trace = z + onp.sqrt(self.Gauss_sigma)*onp.random.randn(onp.size(z))#add noise
 
@@ -112,54 +111,48 @@ class CA_Emissions():
         except AttributeError:
             print("please set data first")
 
-                #Isolate calcium traces offset by correct index for AR1 and AR2
-        if self.AR1: 
+        #Isolate calcium traces offset by correct index for AR1 and AR2
+        AR_order = len(self.AR_params) #right now this is only funcitonal for AR1
 
-            b = np.zeros([self.T-1,1+S])
-            f1 =  b + self.data[0][:-1,None]
-            f0 =  b  + self.data[0][1:,None]
+        b = np.zeros([self.T-1,1+S])
+        f1 =  b + self.data[0][:-1,None]
+        f0 =  b  + self.data[0][1:,None]
 
-            spk_vec = np.array([np.arange(S+1)].T) 
+        spk_vec = np.array([np.arange(S+1)])
 
-            spk_mat =spk_vec*np.ones(np.shape(f1))
+        spk_mat =spk_vec*np.ones(np.shape(f1))
 
-            if learn_hyparams:
-                self.Gauss_sigma, self.tau, self.alpha = params[-3:]
+        if learn_hyparams:
+            self.Gauss_sigma, self.alpha,self.AR_params = params[-(AR_order + 2):]
 
-          
-
-
-            ########### general purpose AR #############         
-            mu = f1*np.exp(-self.dt/self.tau)+self.alpha*spk_mat
-            self.Gauss_ll = log_gaussian_1D(f0, mu, self.Gauss_sigma) #set Gaussian part
+      
 
 
-            ##### do Poiss part 
-            rate = self.mean(params[:(self.T)]) #convert to rate given dt
-
-            #  Compute Poisson log-probability for each rate, for each spike count in spkvect
-            logpoisspdf_mat = log_poisson_1D(spk_vec, rate)
+        ########### general purpose AR #############         
+        mu = f1*np.exp(-self.dt/self.AR_params)+self.alpha*spk_mat
 
 
+        ##### do Poiss part 
+        rate = self.mean(params[:(self.T)]) #convert to rate given dt
 
-            #  Compute joint log-probability of spike counts and Gaussian noise
-            logpjoint = logpoisspdf_mat + self.Gauss_ll
+        #  Compute Poisson log-probability for each rate, for each spike count in spkvect
+        logpoisspdf_mat = log_poisson_1D(spk_vec, [:,None])
 
+        #  Compute joint log-probability of spike counts and Gaussian noise
 
+        loglivec = np.logsumexp(logpoisspdf_mat + log_gaussian_1D(f0, mu, self.Gauss_sigma) , axis = 1)
 
-            loglivec = np.logsumexp(logpjoint, axis = 1)
+        #  sum up over time bins
+        neglogli = -np.sum(loglivec) # sum up and take negative 
 
-            #  sum up over time bins
-            neglogli = -np.sum(loglivec) # sum up and take negative 
+        return(neglogli)
 
-            return(neglogli)
+        # elif self.AR2:
 
-        elif self.AR2:
-
-            b = np.zeros(self.T-2,1+S);
-            f2 =  b + self.data[:-2]
-            f1 =  b + self.data[2:-1]
-            f0 =  b + self.data[3:]
+        #     b = np.zeros(self.T-2,1+S);
+        #     f2 =  b + self.data[:-2]
+        #     f1 =  b + self.data[2:-1]
+        #     f0 =  b + self.data[3:]
 
 
             ##### To Do: AR2 PROCESS HERE!
