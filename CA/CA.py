@@ -14,7 +14,7 @@ import numpy as onp
 
 
 def log_poisson_1D(y, rate):
-    return y.T * np.log(rate) - rate - sp.special.gammaln(y+1)
+    return y * np.log(rate) - rate - sp.special.gammaln(y+1)
 
 def log_gaussian_1D(y, mu, sig2):
     return -0.5 * np.log(2.0 * np.pi * sig2) -0.5 * (y - mu)**2 / sig2
@@ -28,13 +28,11 @@ class CA_Emissions():
     def __init__(
         self,
         dt: float = 0.03333333,
-        AR_params: int = 10,
+        AR_params: list = [10],
         alpha: int = 1,
         max_spk: int = 10,
         Gauss_sigma: float = 0.2,
         T: int = 200, #initialize to 100 timesteps
-        AR1: bool = True,
-        AR2: bool = False,
         link = "log"
     ):
 
@@ -42,8 +40,8 @@ class CA_Emissions():
 
         if dt <= 0:
             raise ValueError("dt must be positive, got {0}".format(dt))
-        if  AR_params <= 0:
-            raise ValueError("Calcium trace timescale must be positive, got {0}".format AR_params))
+        # if  AR_params <= 0:
+        #     raise ValueError("Calcium trace timescale must be positive, got {0}".format(AR_params))
         if alpha <= 0.0:
             raise ValueError("a bound must be positive, got {0}".format(alpha))
         if max_spk <= 0:
@@ -71,11 +69,38 @@ class CA_Emissions():
     def params(self):
         return self.dt, self.alpha, self.Gauss_sigma, self.T, self.AR_params
 
-    def set_data(self, data):
+    def set_data(self, data, S = 10):
 
         if np.shape(data)[-1] != self.T:
             raise ValueError("data should be the same length as T in the calcium class, got {0}".format(np.shape(data)[-1]))
         self.data = data
+
+        #Isolate calcium traces offset by correct index for AR1 and AR2
+        AR_order = np.size(self.AR_params) #right now this is only funcitonal for AR1
+
+
+
+        # b = np.zeros([self.T-1,1+S])
+        # for i in np.arange(AR_order)
+        #     f1 =  b + self.data[0][:-1,None]
+        #     f0 =  b  + self.data[0][1:,None]
+
+
+        b = onp.zeros([AR_order+1, self.T+AR_order,1+S])
+        for i in onp.arange(AR_order):
+            b[i, (-i+AR_order):self.T+(1-i),:] = self.data[0][:,None]
+
+            # ok right now I think storing a big matrix with the data being offset by the AR order is not optimal.
+            # can probably move to something in the LL calculation with a loop over AR parameters. Not sure the 
+            # fastest method here.
+
+
+
+        self.data_mat = b
+
+        self.spk_vec = np.array([np.arange(S+1)])
+
+        self.spk_mat =self.spk_vec*np.ones(np.shape(self.T+AR_order))
 
 
     def sample_data(self, rate, AR = 1):
@@ -90,9 +115,9 @@ class CA_Emissions():
         spikes = onp.random.poisson(rate)
 
 
-        roots = np.exp(-self.dt/self.AR_params) ### here self.AR_params is an n-length vector where n is the AR process order
-        coeffs = np.poly(roots) #find coefficients with of a polynomial with roots of params
-        z = lfilter([self.alpha],coeffs,spk_counts) #generate AR-n process with inputs spk_counts, where self.alpha is the CA increase due to a spike
+        roots = onp.exp(-self.dt/np.array(self.AR_params)) ### here self.AR_params is an n-length vector where n is the AR process order
+        coeffs = onp.poly(roots) #find coefficients with of a polynomial with roots of params
+        z = lfilter([self.alpha],coeffs,spikes) #generate AR-n process with inputs spk_counts, where self.alpha is the CA increase due to a spike
 
 
         # q = [exp(-self.dt/tau_samp),exp(-self.dt/tau_samp_b)]
@@ -105,42 +130,34 @@ class CA_Emissions():
         return trace, spikes
 
 
-    def log_likelihood(self,params, S = 10, learn_hyparams = False):
+    def log_likelihood(self,params, learn_hyparams = False):
         try:
-            self.data
+            self.data #this should pre-set a number of parameters for optimization, as well.
         except AttributeError:
             print("please set data first")
 
-        #Isolate calcium traces offset by correct index for AR1 and AR2
-        AR_order = len(self.AR_params) #right now this is only funcitonal for AR1
 
-        b = np.zeros([self.T-1,1+S])
-        f1 =  b + self.data[0][:-1,None]
-        f0 =  b  + self.data[0][1:,None]
-
-        spk_vec = np.array([np.arange(S+1)])
-
-        spk_mat =spk_vec*np.ones(np.shape(f1))
 
         if learn_hyparams:
             self.Gauss_sigma, self.alpha,self.AR_params = params[-(AR_order + 2):]
 
       
-
-
-        ########### general purpose AR #############         
-        mu = f1*np.exp(-self.dt/self.AR_params)+self.alpha*spk_mat
-
+        AR_order = np.size(self.AR_params)
 
         ##### do Poiss part 
         rate = self.mean(params[:(self.T)]) #convert to rate given dt
 
         #  Compute Poisson log-probability for each rate, for each spike count in spkvect
-        logpoisspdf_mat = log_poisson_1D(spk_vec, [:,None])
+        logpoisspdf_mat = log_poisson_1D(self.spk_vec, rate[:,None])
 
-        #  Compute joint log-probability of spike counts and Gaussian noise
 
-        loglivec = np.logsumexp(logpoisspdf_mat + log_gaussian_1D(f0, mu, self.Gauss_sigma) , axis = 1)
+        ########### general purpose AR from data_mat (to do) #############       
+
+        mu = self.data_mat[1]*np.exp(-self.dt/np.array(self.AR_params))+self.alpha*self.spk_mat
+
+        #  Compute joint log-probability of spike counts and Gaussian noise. Careful about the trimming here.....
+
+        loglivec = sp.special.logsumexp(logpoisspdf_mat[:AR_order] + log_gaussian_1D(self.data_mat[0], mu, self.Gauss_sigma)[AR_order:-AR_order] , axis = 1)
 
         #  sum up over time bins
         neglogli = -np.sum(loglivec) # sum up and take negative 
