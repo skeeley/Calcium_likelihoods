@@ -10,7 +10,7 @@ import numpy as onp
 from jax import grad, jit, vmap
 from jax.experimental import optimizers
 from jax import random
-
+from jax import jacfwd
 
 import matplotlib.pyplot as plt
 import matplotlib
@@ -21,7 +21,7 @@ from CA.CA import CA_Emissions
 
 
 
-ca_obj = CA_Emissions(AR_params = [.05], Gauss_sigma = 0.01, T = 1000) 
+ca_obj = CA_Emissions(AR_params = [.05], Gauss_sigma = 0.01, Tps = 1000) 
 
 rate = np.sin(np.arange(0,10,.01))+1
 
@@ -80,15 +80,17 @@ def bbvi(logprob, N, num_samples):
     def gaussian_entropy(log_std):
         return 0.5 * N * (1.0 + np.log(2*np.pi)) + np.sum(log_std)
 
-    key = random.PRNGKey(10003)
+    
 
     def variational_objective(params):
         """Provides a stochastic estimate of the variational lower bound."""
         mean, log_std, hyperparams = unpack_params(params) 
-        samples = random.normal(key, [num_samples, N]) * np.exp(log_std) + mean #Generate samples using reparam trick
+        key = random.PRNGKey(10003)
+        key, subkey = random.split(key)
+        samples = random.normal(subkey, [num_samples, N]) * np.exp(log_std) + mean #Generate samples using reparam trick
         ### use jax vmap to calculate over samples here
         #handle for batched params
-        logprob_samp  = lambda x: logprob(x, hyperparams)
+        logprob_samp  = lambda x: logprob(x, [100,1])
         batched_logprob = vmap(logprob_samp)
         lower_bound = gaussian_entropy(log_std) + np.mean(batched_logprob(samples)) #return elbo and hyperparams (loadings and length scale)
 
@@ -108,51 +110,54 @@ def calc_gp_prior(x_samps, K):
 	'''
 
 	Kinv = np.linalg.inv(K)
-	log_prior =-(1/2)*(np.matmul(np.matmul(x_samps,Kinv), x_samps)+ np.linalg.slogdet(K)[1]) 
+	log_prior = -(1/2)*(np.matmul(np.matmul(x_samps,Kinv), x_samps)+ np.linalg.slogdet(K)[1]) 
 
 	return log_prior
 
 
 def log_joint(ca_params, hyperparams, ca_obj):
 
+
 	ll =ca_obj.log_likelihood(ca_params)
-	K = make_cov(ca_obj.T, hyperparams[0], hyperparams[1])
+	K = make_cov(ca_obj.Tps, hyperparams[0], hyperparams[1]) + np.eye(ca_obj.Tps)*1e-7
 	log_prior = calc_gp_prior(ca_params, K)
 	return log_prior + ll
 
 
 ##### set up optimization
 
-num_samples = 5
+num_samples = 10
 
-rate_length = ca_obj.T
+rate_length = ca_obj.Tps
 loc = np.ones(rate_length, np.float32)
 log_scale = -10* np.ones(rate_length, np.float32)
 
 
-init_ls = np.array([20], np.float32)
-init_rho = np.array([5], np.float32)
+init_ls = np.array([100], np.float32)
+init_rho = np.array([3], np.float32)
 
-full_params = np.concatenate([loc, log_scale,init_ls, init_rho])
+full_params = np.concatenate([loc, log_scale, init_rho,init_ls])
 
 
 log_joint_fullparams = lambda samples, hyperparams: log_joint(samples, hyperparams, ca_obj)
 varobjective, gradient, unpack_params = bbvi(log_joint_fullparams, rate_length, num_samples)
 
-varobjective(full_params)
 
 
-#testing here.....
-gradient = grad(ca_obj.log_likelihood) 
+# #testing here.....
+# gradient = grad(ca_obj.log_likelihood) 
+# gradient = jacfwd(ca_obj.log_likelihood) 
+# rate = 2*np.ones(ca_obj.Tps)
+
+# gradient(rate)
 
 
-
-
-step_size = 0.01
+step_size = 1
+print(varobjective(full_params))
 for i in range(1000):
 
 	full_params_grad = gradient(full_params)
-	full_params += step_size *full_params_grad
+	full_params -= step_size *full_params_grad
 	if i % 10 == 0:
 		elbo_val = varobjective(full_params)
 		print('{}\t{}'.format(i, elbo_val))

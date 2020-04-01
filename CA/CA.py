@@ -27,12 +27,12 @@ class CA_Emissions():
 
     def __init__(
         self,
-        dt: float = 0.03333333,
+        dt: float = 0.01,
         AR_params: list = [10],
         alpha: int = 1,
         max_spk: int = 10,
         Gauss_sigma: float = 0.2,
-        T: int = 200, #initialize to 100 timesteps
+        Tps: int = 200, #initialize to 100 timesteps
         link = "log"
     ):
 
@@ -54,7 +54,7 @@ class CA_Emissions():
         self.max_spk = max_spk
         self.Gauss_sigma = Gauss_sigma
 
-        self.T = T
+        self.Tps = Tps
         # self.AR1 = AR1
         # self.AR2 = AR2
 
@@ -67,11 +67,11 @@ class CA_Emissions():
 
     @property
     def params(self):
-        return self.dt, self.alpha, self.Gauss_sigma, self.T, self.AR_params
+        return self.dt, self.alpha, self.Gauss_sigma, self.Tps, self.AR_params
 
     def set_data(self, data, S = 10):
 
-        if np.shape(data)[-1] != self.T:
+        if np.shape(data)[-1] != self.Tps:
             raise ValueError("data should be the same length as T in the calcium class, got {0}".format(np.shape(data)[-1]))
         self.data = data
 
@@ -80,15 +80,15 @@ class CA_Emissions():
 
 
 
-        # b = np.zeros([self.T-1,1+S])
+        # b = np.zeros([self.Tps-1,1+S])
         # for i in np.arange(AR_order)
         #     f1 =  b + self.data[0][:-1,None]
         #     f0 =  b  + self.data[0][1:,None]
 
 
-        b = onp.zeros([AR_order+1, self.T+AR_order,1+S])
-        for i in onp.arange(AR_order):
-            b[i, (-i+AR_order):self.T+(1-i),:] = self.data[0][:,None]
+        b = onp.zeros([AR_order+1, self.Tps+AR_order,1+S])
+        for i in onp.arange(AR_order+1):
+            b[i, (-i+AR_order):self.Tps+(1-i),:] = self.data[0][:,None]
 
             # ok right now I think storing a big matrix with the data being offset by the AR order is not optimal.
             # can probably move to something in the LL calculation with a loop over AR parameters. Not sure the 
@@ -100,7 +100,7 @@ class CA_Emissions():
 
         self.spk_vec = np.array([np.arange(S+1)])
 
-        self.spk_mat =self.spk_vec*np.ones(np.shape(self.T+AR_order))
+        self.spk_mat =self.spk_vec*np.ones(np.shape(self.Tps+AR_order))
 
 
     def sample_data(self, rate, AR = 1):
@@ -108,7 +108,7 @@ class CA_Emissions():
         Generate simulated data with default class params. Feel free to change if needed. Can be AR1 or AR2
         '''
 
-        if np.shape(rate)[-1] != self.T:
+        if np.shape(rate)[-1] != self.Tps:
             raise ValueError("rate should be the same length as T in the calcium class, got {0}".format(np.shape(data)[-1]))
 
 
@@ -145,7 +145,7 @@ class CA_Emissions():
         AR_order = np.size(self.AR_params)
 
         ##### do Poiss part 
-        rate = self.mean(params[:(self.T)]) #convert to rate given dt
+        rate = self.mean(params[:(self.Tps)]) #convert to rate given dt
 
         #  Compute Poisson log-probability for each rate, for each spike count in spkvect
         logpoisspdf_mat = log_poisson_1D(self.spk_vec, rate[:,None])
@@ -157,16 +157,16 @@ class CA_Emissions():
 
         #  Compute joint log-probability of spike counts and Gaussian noise. Careful about the trimming here.....
 
-        loglivec = sp.special.logsumexp(logpoisspdf_mat[:AR_order] + log_gaussian_1D(self.data_mat[0], mu, self.Gauss_sigma)[AR_order:-AR_order] , axis = 1)
+        loglivec = sp.special.logsumexp(logpoisspdf_mat[:-AR_order] + log_gaussian_1D(self.data_mat[0], mu, self.Gauss_sigma)[AR_order:-AR_order] , axis = 1)
 
         #  sum up over time bins
-        neglogli = -np.sum(loglivec) # sum up and take negative 
+        logli = np.sum(loglivec) # sum up and take negative 
 
-        return(neglogli)
+        return(logli)
 
         # elif self.AR2:
 
-        #     b = np.zeros(self.T-2,1+S);
+        #     b = np.zeros(self.Tps-2,1+S);
         #     f2 =  b + self.data[:-2]
         #     f1 =  b + self.data[2:-1]
         #     f0 =  b + self.data[3:]
