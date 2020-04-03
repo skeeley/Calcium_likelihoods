@@ -21,6 +21,7 @@ def log_gaussian_1D(y, mu, sig2):
 
 
 
+
 class CA_Emissions():
 
     # ---- Create struct and make stimulus design matrix ---------------------

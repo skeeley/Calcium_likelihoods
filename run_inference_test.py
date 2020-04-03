@@ -21,9 +21,18 @@ from CA.CA import CA_Emissions
 
 
 
-ca_obj = CA_Emissions(AR_params = [.05], Gauss_sigma = 0.01, Tps = 1000) 
+timepoints = 400
+# rate = .1*np.ones(timepoints)#generate poisson rate
 
-rate = np.sin(np.arange(0,10,.01))+1
+ca_obj = CA_Emissions(AR_params = [.05], Gauss_sigma = 0.2, Tps = timepoints) #generate AR1 calcium object
+# plt.plot(ca_obj.sample_data(rate)[0][0:500])
+
+
+
+# ca_obj = CA_Emissions(AR_params = [.1, .05], Gauss_sigma = 0.01, Tps = timepoints) #generate AR1 calcium object
+# plt.plot(ca_obj.sample_data(rate)[0][0:500])
+
+rate = .7*np.sin(np.arange(0,4,.01))+1
 
 samp_data = ca_obj.sample_data(rate)
 
@@ -82,27 +91,25 @@ def bbvi(logprob, N, num_samples):
 
     
 
-    def variational_objective(params):
+    def variational_objective(params, subkey):
         """Provides a stochastic estimate of the variational lower bound."""
         mean, log_std, hyperparams = unpack_params(params) 
-        key = random.PRNGKey(10003)
-        key, subkey = random.split(key)
-        samples = random.normal(subkey, [num_samples, N]) * np.exp(log_std) + mean #Generate samples using reparam trick
+        samples = random.normal(subkey, shape = [num_samples, N]) * np.exp(log_std) + mean #Generate samples using reparam trick
         ### use jax vmap to calculate over samples here
         #handle for batched params
-        logprob_samp  = lambda x: logprob(x, [100,1])
+        logprob_samp  = lambda x: logprob(x, hyperparams)
         batched_logprob = vmap(logprob_samp)
         lower_bound = gaussian_entropy(log_std) + np.mean(batched_logprob(samples)) #return elbo and hyperparams (loadings and length scale)
 
         return -lower_bound
 
-    gradient = grad(variational_objective)
+    gradient = jit(grad(variational_objective))
 
     return variational_objective, gradient, unpack_params
 
 
 
-def calc_gp_prior(x_samps, K):
+def calc_gp_prior(rate, K):
 	'''
 	Calculates the GP log prior (time domain)
 	x_samples should be nsamples by T
@@ -110,7 +117,7 @@ def calc_gp_prior(x_samps, K):
 	'''
 
 	Kinv = np.linalg.inv(K)
-	log_prior = -(1/2)*(np.matmul(np.matmul(x_samps,Kinv), x_samps)+ np.linalg.slogdet(K)[1]) 
+	log_prior = -(1/2)*(np.shape(Kinv)[0]*np.log(2*np.pi) + np.matmul(rate,np.matmul(Kinv,rate))+ np.linalg.slogdet(K)[1]) 
 
 	return log_prior
 
@@ -119,7 +126,7 @@ def log_joint(ca_params, hyperparams, ca_obj):
 
 
 	ll =ca_obj.log_likelihood(ca_params)
-	K = make_cov(ca_obj.Tps, hyperparams[0], hyperparams[1]) + np.eye(ca_obj.Tps)*1e-7
+	K = make_cov(ca_obj.Tps, hyperparams[0], hyperparams[1]) + np.eye(ca_obj.Tps)*1e-2
 	log_prior = calc_gp_prior(ca_params, K)
 	return log_prior + ll
 
@@ -129,17 +136,18 @@ def log_joint(ca_params, hyperparams, ca_obj):
 num_samples = 10
 
 rate_length = ca_obj.Tps
-loc = np.ones(rate_length, np.float32)
-log_scale = -10* np.ones(rate_length, np.float32)
+loc = np.zeros(rate_length, np.float32)
+log_scale = -2* np.ones(rate_length, np.float32)
 
 
-init_ls = np.array([100], np.float32)
-init_rho = np.array([3], np.float32)
+init_ls = np.array([90], np.float32)
+init_rho = np.array([1], np.float32)
 
 full_params = np.concatenate([loc, log_scale, init_rho,init_ls])
 
 
 log_joint_fullparams = lambda samples, hyperparams: log_joint(samples, hyperparams, ca_obj)
+
 varobjective, gradient, unpack_params = bbvi(log_joint_fullparams, rate_length, num_samples)
 
 
@@ -150,19 +158,23 @@ varobjective, gradient, unpack_params = bbvi(log_joint_fullparams, rate_length, 
 # rate = 2*np.ones(ca_obj.Tps)
 
 # gradient(rate)
+#varobjective(full_params, key)
 
-
-step_size = 1
-print(varobjective(full_params))
-for i in range(1000):
-
-	full_params_grad = gradient(full_params)
+step_size = .001
+key = random.PRNGKey(10003)
+elbos = []
+for i in range(4000):
+	key, subkey = random.split(key)
+	full_params_grad = gradient(full_params, subkey)
 	full_params -= step_size *full_params_grad
-	if i % 10 == 0:
-		elbo_val = varobjective(full_params)
+	if i % 50 == 0:
+		print(full_params[0:20])
+		elbo_val = varobjective(full_params, key)
+		elbos.append(elbo_val)
 		print('{}\t{}'.format(i, elbo_val))
 
 
+plt.plot(np.log(full_params[0:ca_obj.Tps]/ca_obj.dt)
 
 # opt_init, opt_update = optimizers.adam(step_size=1e-3)
 # opt_state = opt_init(net_params)
