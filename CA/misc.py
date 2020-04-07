@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 
 import jax
 import jax.numpy as np
+from jax import random
 from jax import grad, jit, vmap
 # Current convention is to import original numpy as "onp"
 import numpy as onp
@@ -30,7 +31,7 @@ def safe_logsoftplus(x, up_limit=30, low_limit = -30):
 	x[x>up_limit] = np.log(x[x>up_limit])
 	x[(x<up_limit) & (x>low_limit)] = np.log(softplus(x[(x<up_limit) & (x>low_limit)]))
 	#x[x<low_limit] = x[x<low_limit]
-return x
+	return x
 def safe_logsoftplus_vjp(ans, x, low_limit = -30):
 	x_shape = x.shape
 	operator = np.ones(x.shape)
@@ -38,6 +39,14 @@ def safe_logsoftplus_vjp(ans, x, low_limit = -30):
 	return lambda g: np.full(x_shape,g)* operator
 	#return lambda g: np.full(x_shape, g) * 1/ ((1+np.exp(-x))*safe_softplus(x))
 jax.defvjp_all(safe_logsoftplus, safe_logsoftplus_vjp)
+
+
+
+def make_cov(N, rh, len_sc):
+  M1 = np.array([np.arange(N)])- np.transpose(np.array([np.arange(N)]))
+  K = rh*np.exp(-(np.square(M1)/(2*np.square(len_sc))))
+  return K
+
 
 
 def bbvi(logprob, N, num_samples):
@@ -72,18 +81,24 @@ def bbvi(logprob, N, num_samples):
     def gaussian_entropy(log_std):
         return 0.5 * N * (1.0 + np.log(2*np.pi)) + np.sum(log_std)
 
-    rs = npr.RandomState(0)
-    def variational_objective(params,t):
+    
+
+    def variational_objective(params, subkey):
         """Provides a stochastic estimate of the variational lower bound."""
-        mean, log_std, hyperparams = unpack_params_E(params) 
-        samples = rs.randn(num_samples, N) * np.exp(log_std) + mean #Generate samples using reparam trick
-        lower_bound = gaussian_entropy(log_std) + np.mean(logprob(samples,t, hyperparms)) #return elbo and hyperparams (loadings and length scale)
+        mean, log_std, hyperparams = unpack_params(params) 
+        samples = random.normal(subkey, shape = [num_samples, N]) * np.exp(log_std) + mean #Generate samples using reparam trick
+        ### use jax vmap to calculate over samples here
+        #handle for batched params
+        logprob_samp  = lambda x: logprob(x, hyperparams)
+        batched_logprob = vmap(logprob_samp)
+        lower_bound = gaussian_entropy(log_std) + np.mean(batched_logprob(samples)) #return elbo and hyperparams (loadings and length scale)
 
         return -lower_bound
 
-    gradient = grad(variational_objective)
+    gradient = jit(grad(variational_objective))
 
     return variational_objective, gradient, unpack_params
+
 
 
 def calc_gp_prior(x_samps,):
@@ -95,10 +110,7 @@ def calc_gp_prior(x_samps,):
 	logprior = -(1/2)*(np.sum(np.square(x_samp)/cdiaglat,axis=1)+(1/2)*np.sum(np.linalg.slogdet(cdiaglat)))  
 	total_prior = logprior + total_prior
 
-  return total_prior
+	return total_prior
 
-def make_cov(N, rh, len_sc):
-  M1 = np.array([range(N)])- np.transpose(np.array([range(N)]))
-  K = rh*np.exp(-(np.square(M1)/(2*np.square(len_sc))))
-  return K
+
 

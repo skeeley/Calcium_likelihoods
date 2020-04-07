@@ -12,19 +12,21 @@ from jax.experimental import optimizers
 from jax import random
 from jax import jacfwd
 
+import Fourier as gpf 
+
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.interactive(True)
 
 from CA.CA import CA_Emissions
-#from CA.misc import bbvi, make_cov
+from CA.misc import bbvi, make_cov
 
 
 
-timepoints = 400
+timepoints = 500
 # rate = .1*np.ones(timepoints)#generate poisson rate
 
-ca_obj = CA_Emissions(AR_params = [.05], Gauss_sigma = 0.2, Tps = timepoints) #generate AR1 calcium object
+ca_obj = CA_Emissions(AR_params = [.05], Gauss_sigma = 0.1, Tps = timepoints) #generate AR1 calcium object
 # plt.plot(ca_obj.sample_data(rate)[0][0:500])
 
 
@@ -32,124 +34,97 @@ ca_obj = CA_Emissions(AR_params = [.05], Gauss_sigma = 0.2, Tps = timepoints) #g
 # ca_obj = CA_Emissions(AR_params = [.1, .05], Gauss_sigma = 0.01, Tps = timepoints) #generate AR1 calcium object
 # plt.plot(ca_obj.sample_data(rate)[0][0:500])
 
-rate = .7*np.sin(np.arange(0,4,.01))+1
+rate = 50*np.cos(np.arange(0,5,.01))+50
 
-samp_data = ca_obj.sample_data(rate)
+samp_data = ca_obj.sample_data(rate*ca_obj.dt)
 
 ca_obj.set_data(samp_data)
 
 
 
-# def normal_sample(key, shape):
-#     """Convenience function for quasi-stateful RNG."""
-#     new_key, sub_key = random.split(key)
-#     return new_key, random.normal(sub_key, shape)
 
 
-# normal_sample = jax.jit(normal_sample, static_argnums=(1,))
-
-
-
-def make_cov(N, rh, len_sc):
-  M1 = np.array([np.arange(N)])- np.transpose(np.array([np.arange(N)]))
-  K = rh*np.exp(-(np.square(M1)/(2*np.square(len_sc))))
-  return K
-
-
-
-def bbvi(logprob, N, num_samples):
-    """Implements http://arxiv.org/abs/1401.0118, and uses the
-    local reparameterization trick from http://arxiv.org/abs/1506.02557
-
-    Structure of function taken from: https://github.com/HIPS/autograd/blob/master/examples/black_box_svi.py
-	
-	inputs: 
-	logprob : joint likelihood function - Form of this function must follow a convention -
-			 - first argument is variable being sampled over (x)
-			 - second argument is an indicator for iteration number (t)
-			 - third argument is a vector of hyperparams we wish to also optimize (hyperparams)
-			
-	N: number of variational parameters
-	num_samples: Number of samples 
-	n_hyperparams: number of hyperparams to jointly optimize 
-
-	outputs:
-	Variational_objective: the elbo
-	gradient: Gradient of elbo
-	unpack_params: optional function which will decompose mean, variance, and hyperparams from vector params
-    """
-
-
-    def unpack_params(params):
-        # Variational dist is a diagonal Gaussian followed by hyperparameters
-        mean, log_std, hyperparams = params[:N], params[N:2*N], params[2*N:]
-
-        return mean, log_std, hyperparams
-
-    def gaussian_entropy(log_std):
-        return 0.5 * N * (1.0 + np.log(2*np.pi)) + np.sum(log_std)
-
-    
-
-    def variational_objective(params, subkey):
-        """Provides a stochastic estimate of the variational lower bound."""
-        mean, log_std, hyperparams = unpack_params(params) 
-        samples = random.normal(subkey, shape = [num_samples, N]) * np.exp(log_std) + mean #Generate samples using reparam trick
-        ### use jax vmap to calculate over samples here
-        #handle for batched params
-        logprob_samp  = lambda x: logprob(x, hyperparams)
-        batched_logprob = vmap(logprob_samp)
-        lower_bound = gaussian_entropy(log_std) + np.mean(batched_logprob(samples)) #return elbo and hyperparams (loadings and length scale)
-
-        return -lower_bound
-
-    gradient = jit(grad(variational_objective))
-
-    return variational_objective, gradient, unpack_params
-
-
-
-def calc_gp_prior(rate, K):
+def calc_gp_prior(rate, K, Fourier = False):
 	'''
 	Calculates the GP log prior (time domain)
 	x_samples should be nsamples by T
 	K is T by T
 	'''
+	if Fourier:
+		log_prior = -(1/2)*(np.sum(np.square(rate)/K)+ np.sum(np.log(2*np.pi*K)))  
 
-	Kinv = np.linalg.inv(K)
-	log_prior = -(1/2)*(np.shape(Kinv)[0]*np.log(2*np.pi) + np.matmul(rate,np.matmul(Kinv,rate))+ np.linalg.slogdet(K)[1]) 
+	else:
+		Kinv = np.linalg.inv(K)
+		log_prior = -(1/2)*(np.shape(Kinv)[0]*np.log(2*np.pi) + np.matmul(rate,np.matmul(Kinv,rate))+ np.linalg.slogdet(K)[1]) 
 
 	return log_prior
 
 
-def log_joint(ca_params, hyperparams, ca_obj):
+def log_joint(ca_params, hyperparams, ca_obj, Fourier = False, nxcirc = None, wwnrm = None, Bf = None):
 
+	if Fourier:
+		K = hyperparams[0] * gpf.mkcovs.mkcovdiag_ASD_wellcond(hyperparams[1], 1, nxcirc, wwnrm = wwnrm,addition = 1e-4)
+		log_prior = calc_gp_prior(ca_params, K, Fourier = True)
+		ll =ca_obj.log_likelihood(np.matmul(ca_params, Bf))
 
-	ll =ca_obj.log_likelihood(ca_params)
-	K = make_cov(ca_obj.Tps, hyperparams[0], hyperparams[1]) + np.eye(ca_obj.Tps)*1e-2
-	log_prior = calc_gp_prior(ca_params, K)
+	else:
+		K = make_cov(ca_obj.Tps, hyperparams[0], hyperparams[1]) + np.eye(ca_obj.Tps)*1e-2
+		log_prior = calc_gp_prior(ca_params, K)
+		ll =ca_obj.log_likelihood(ca_params)
+
 	return log_prior + ll
 
 
-##### set up optimization
+##### set up optimization (time domain)
 
-num_samples = 10
+# num_samples = 5
 
-rate_length = ca_obj.Tps
+# rate_length = ca_obj.Tps
+# loc = np.zeros(rate_length, np.float32)
+# log_scale = -5* np.ones(rate_length, np.float32)
+
+
+# init_ls = np.array([90], np.float32)
+# init_rho = np.array([1], np.float32)
+
+# full_params = np.concatenate([loc, log_scale, init_rho,init_ls])
+
+
+# log_joint_fullparams = lambda samples, hyperparams: log_joint(samples, hyperparams, ca_obj)
+
+# varobjective, gradient, unpack_params = bbvi(log_joint_fullparams, rate_length, num_samples)
+
+
+
+
+
+
+
+
+####### Fourier Domain #############
+minlens = 20 #assert a minimum scale for eigenvalue thresholding
+nxc_ext = 0.05
+
+_, wwnrm, Bffts, nxcirc = gpf.comp_fourier.conv_fourier(ca_obj.data, ca_obj.Tps, minlens,nxcirc = np.array([ca_obj.Tps+nxc_ext*ca_obj.Tps]))
+N_four = Bffts[0].shape[0]
+
+
+num_samples = 8
+
+rate_length = N_four
 loc = np.zeros(rate_length, np.float32)
-log_scale = -2* np.ones(rate_length, np.float32)
+log_scale = -5* np.ones(rate_length, np.float32)
 
 
-init_ls = np.array([90], np.float32)
+init_ls = np.array([80], np.float32)
 init_rho = np.array([1], np.float32)
 
 full_params = np.concatenate([loc, log_scale, init_rho,init_ls])
 
 
-log_joint_fullparams = lambda samples, hyperparams: log_joint(samples, hyperparams, ca_obj)
+log_joint_fullparams = lambda samples, hyperparams: log_joint(samples, hyperparams, ca_obj, Fourier = True, Bf=Bffts[0], wwnrm = wwnrm, nxcirc = nxcirc)
 
 varobjective, gradient, unpack_params = bbvi(log_joint_fullparams, rate_length, num_samples)
-
 
 
 # #testing here.....
@@ -160,10 +135,10 @@ varobjective, gradient, unpack_params = bbvi(log_joint_fullparams, rate_length, 
 # gradient(rate)
 #varobjective(full_params, key)
 
-step_size = .001
+step_size = .005
 key = random.PRNGKey(10003)
 elbos = []
-for i in range(4000):
+for i in range(8000):
 	key, subkey = random.split(key)
 	full_params_grad = gradient(full_params, subkey)
 	full_params -= step_size *full_params_grad
@@ -174,7 +149,35 @@ for i in range(4000):
 		print('{}\t{}'.format(i, elbo_val))
 
 
-plt.plot(np.log(full_params[0:ca_obj.Tps]/ca_obj.dt)
+###fourier 
+
+time_domain_params = np.matmul(full_params[0:N_four],Bffts[0])
+
+
+#
+plt.subplot(3,1,1)
+plt.ylabel('True rate')
+plt.plot(np.arange(0,5,.01),rate*ca_obj.dt)
+plt.subplot(3,1,2)
+plt.plot(np.arange(0,5,.01),samp_data[1])
+plt.ylabel('Spikes')
+plt.subplot(3,1,3)
+plt.plot(np.arange(0,5,.01),samp_data[0])
+plt.ylabel('Ca activity')
+plt.xlabel('Time (sec)')
+
+plt.figure(2)
+plt.plot(np.arange(0,5,.01),np.exp(time_domain_params))
+plt.plot(np.arange(0,5,.01),rate)
+plt.legend(['Inferred rate', 'true rate'])
+plt.ylabel('Rate')
+plt.xlabel('Time (sec)')
+
+plt.figure(3)
+plt.plot(-np.array(elbos))
+plt.ylabel('Elbo')
+plt.xlabel('Iterations')
+
 
 # opt_init, opt_update = optimizers.adam(step_size=1e-3)
 # opt_state = opt_init(net_params)
