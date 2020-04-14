@@ -138,12 +138,13 @@ class CA_Emissions():
             print("please set data first")
 
 
-
+        AR_order = np.size(self.AR_params)
+        
         if learn_hyparams:
-            self.Gauss_sigma, self.alpha,self.AR_params = params[-(AR_order + 2):]
+            self.Gauss_sigma, self.alpha, self.AR_params = params[-(AR_order + 2):]
 
       
-        AR_order = np.size(self.AR_params)
+        
 
         ##### do Poiss part 
         rate = self.mean(params[:(self.Tps)]) #convert to rate given dt
@@ -155,6 +156,10 @@ class CA_Emissions():
         ########### general purpose AR from data_mat (to do) #############       
 
         mu = self.data_mat[1]*np.exp(-self.dt/np.array(self.AR_params))+self.alpha*self.spk_mat
+
+
+
+
 
         #  Compute joint log-probability of spike counts and Gaussian noise. Careful about the trimming here.....
 
