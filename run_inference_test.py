@@ -12,7 +12,7 @@ from jax.experimental import optimizers
 from jax import random
 from jax import jacfwd
 
-import Fourier as gpf 
+import GP_fourier as gpf 
 
 import matplotlib.pyplot as plt
 import matplotlib

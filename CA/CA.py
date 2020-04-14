@@ -29,10 +29,10 @@ class CA_Emissions():
     def __init__(
         self,
         dt: float = 0.01,
-        AR_params: list = [10],
+        AR_params: list = [.05],
         alpha: int = 1,
         max_spk: int = 10,
-        Gauss_sigma: float = 0.2,
+        Gauss_sigma: float = 0.1,
         Tps: int = 200, #initialize to 100 timesteps
         link = "log"
     ):

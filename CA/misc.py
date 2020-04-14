@@ -86,7 +86,7 @@ def bbvi(logprob, N, num_samples):
     def variational_objective(params, subkey):
         """Provides a stochastic estimate of the variational lower bound."""
         mean, log_std, hyperparams = unpack_params(params) 
-        samples = random.normal(subkey, shape = [num_samples, N]) * np.exp(log_std) + mean #Generate samples using reparam trick
+        samples = random.normal(subkey, shape = [num_samples, N], dtype=np.float64) * np.exp(log_std) + mean #Generate samples using reparam trick
         ### use jax vmap to calculate over samples here
         #handle for batched params
         logprob_samp  = lambda x: logprob(x, hyperparams)
