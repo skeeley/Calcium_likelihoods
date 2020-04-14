@@ -1,3 +1,4 @@
 [submodule "GP_fourier"]
 	path = GP_fourier
 	url = https://github.com/skeeley/GP_fourier.git
+	branch = jax_version
