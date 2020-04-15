@@ -78,16 +78,19 @@ def log_joint(ca_params, hyperparams, ca_obj, Fourier = False, nxcirc = None, ww
 	if Fourier:
 		K = hyperparams[0] * gpf.mkcovs.mkcovdiag_ASD_wellcond(hyperparams[1], 1, nxcirc, wwnrm = wwnrm,addition = 1e-4)
 		log_prior = calc_gp_prior(ca_params, K, Fourier = True)
-		
-		params = np.append(np.matmul(ca_params, Bf))
+
+		params = np.matmul(ca_params, Bf)
 		if learn_hyparams:
-			params = np.append(np.matmul(ca_params, Bf), hyperparams[2:])
-		ll =ca_obj.log_likelihood(params, learn_hyparams = learn_hyparams)
+			params = np.append(params, np.array([0.1, hyperparams[3], 0.05]))
+		
 
 	else:
 		K = make_cov(ca_obj.Tps, hyperparams[0], hyperparams[1]) + np.eye(ca_obj.Tps)*1e-2
 		log_prior = calc_gp_prior(ca_params, K)
-		ll =ca_obj.log_likelihood(ca_params, learn_hyparams = learn_hyparams)
+		if learn_hyparams:
+			params = np.append(ca_params, hyperparams[2:])
+
+	ll =ca_obj.log_likelihood(params, learn_hyparams = learn_hyparams)
 
 	return log_prior + ll
 
@@ -126,20 +129,24 @@ _, wwnrm, Bffts, nxcirc = gpf.comp_fourier.conv_fourier(ca_obj.data, ca_obj.Tps,
 N_four = Bffts[0].shape[0]
 
 
-num_samples = 15
+num_samples = 12
 
 rate_length = N_four
 loc = np.zeros(rate_length, np.float64)
 log_scale = -5* np.ones(rate_length, np.float64)
 
 
-init_ls = np.array([100], np.float64)
+init_ls = np.array([200], np.float64)
 init_rho = np.array([1], np.float64)
 
-full_params = np.concatenate([loc, log_scale, init_rho,init_ls])
+init_marg_var = np.array([.1], np.float64)
+init_alpha = np.array([1], np.float64)
+init_tau = np.array([.05], np.float64)
 
+full_params = np.concatenate([loc, log_scale, init_rho,init_ls,init_marg_var, init_alpha,   init_tau])
+#full_params = np.concatenate([loc, log_scale, init_rho,init_ls])
 
-log_joint_fullparams = lambda samples, hyperparams: log_joint(samples, hyperparams, ca_obj, Fourier = True, Bf=Bffts[0], wwnrm = wwnrm, nxcirc = nxcirc)
+log_joint_fullparams = lambda samples, hyperparams: log_joint(samples, hyperparams, ca_obj, Fourier = True, learn_hyparams = True, Bf=Bffts[0], wwnrm = wwnrm, nxcirc = nxcirc)
 
 varobjective, gradient, unpack_params = bbvi(log_joint_fullparams, rate_length, num_samples)
 
@@ -172,7 +179,7 @@ varobjective, gradient, unpack_params = bbvi(log_joint_fullparams, rate_length, 
 
 ###### ADAM #############
 
-opt_init, opt_update, opt_get_params = optimizers.adam(step_size=.02)
+opt_init, opt_update, opt_get_params = optimizers.adam(step_size=.03)
 opt_state = opt_init(full_params)
 
 key = random.PRNGKey(10003)
@@ -185,11 +192,16 @@ def step(i, key, opt_state):
 	g = grad(objective)(full_params)
 	return opt_update(i, g, opt_state)
 
-for i in range(15000):
+
+
+elbos = []
+for i in range(25000):
 	key, subkey = random.split(key)
 	opt_state = step(i, key, opt_state)
 	if i % 100 == 0:
-		print(i, varobjective(opt_get_params(opt_state), key))
+		elbo_val = varobjective(opt_get_params(opt_state), key)
+		print(i, elbo_val)
+		elbos.append(elbo_val)
 final_params = opt_get_params(opt_state)
 
 
