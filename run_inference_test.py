@@ -66,7 +66,7 @@ def calc_gp_prior(rate, K, Fourier = False):
 	return log_prior
 
 
-def log_joint(ca_params, hyperparams, ca_obj, Fourier = False, nxcirc = None, wwnrm = None, Bf = None, learn_hyparams = False):
+def log_joint(X, model_params, ca_obj, Fourier = False, nxcirc = None, wwnrm = None, Bf = None, learn_hyparams = False):
 
 	# logjoint here can work in fourier domain or not.
 	# If Fourier, need to pass in Fourier args (nxcirc, wwnrm, bf)
@@ -76,19 +76,19 @@ def log_joint(ca_params, hyperparams, ca_obj, Fourier = False, nxcirc = None, ww
 
 
 	if Fourier:
-		K = hyperparams[0] * gpf.mkcovs.mkcovdiag_ASD_wellcond(hyperparams[1], 1, nxcirc, wwnrm = wwnrm,addition = 1e-4)
-		log_prior = calc_gp_prior(ca_params, K, Fourier = True)
+		K = model_params[0] * gpf.mkcovs.mkcovdiag_ASD_wellcond(model_params[1], 1, nxcirc, wwnrm = wwnrm,addition = 1e-4)
+		log_prior = calc_gp_prior(X, K, Fourier = True)
 
-		params = np.matmul(ca_params, Bf)
+		params = np.matmul(X, Bf)
 		if learn_hyparams:
-			params = np.append(params, np.array([0.1, hyperparams[3], 0.05]))
+			params = np.append(params, np.array([model_params[2:]]))
 		
 
 	else:
-		K = make_cov(ca_obj.Tps, hyperparams[0], hyperparams[1]) + np.eye(ca_obj.Tps)*1e-2
-		log_prior = calc_gp_prior(ca_params, K)
+		K = make_cov(ca_obj.Tps, model_params[0], model_params[1]) + np.eye(ca_obj.Tps)*1e-2
+		log_prior = calc_gp_prior(X, K)
 		if learn_hyparams:
-			params = np.append(ca_params, hyperparams[2:])
+			params = np.append(X, model_params[2:])
 
 	ll =ca_obj.log_likelihood(params, learn_hyparams = learn_hyparams)
 
@@ -97,22 +97,22 @@ def log_joint(ca_params, hyperparams, ca_obj, Fourier = False, nxcirc = None, ww
 
 ##### set up optimization (time domain)
 
-# num_samples = 5
+num_samples = 5
 
-# rate_length = ca_obj.Tps
-# loc = np.zeros(rate_length, np.float32)
-# log_scale = -5* np.ones(rate_length, np.float32)
-
-
-# init_ls = np.array([90], np.float32)
-# init_rho = np.array([1], np.float32)
-
-# full_params = np.concatenate([loc, log_scale, init_rho,init_ls])
+rate_length = ca_obj.Tps
+loc = np.zeros(rate_length, np.float32)
+log_scale = -5* np.ones(rate_length, np.float32)
 
 
-# log_joint_fullparams = lambda samples, hyperparams: log_joint(samples, hyperparams, ca_obj)
+init_ls = np.array([90], np.float32)
+init_rho = np.array([1], np.float32)
 
-# varobjective, gradient, unpack_params = bbvi(log_joint_fullparams, rate_length, num_samples)
+full_params = np.concatenate([loc, log_scale, init_rho,init_ls])
+
+
+log_joint_fullparams = lambda samples, hyperparams: log_joint(samples, hyperparams, ca_obj)
+
+varobjective, gradient, unpack_params = bbvi(log_joint_fullparams, rate_length, num_samples)
 
 
 
@@ -132,8 +132,8 @@ N_four = Bffts[0].shape[0]
 num_samples = 12
 
 rate_length = N_four
-loc = np.zeros(rate_length, np.float64)
-log_scale = -5* np.ones(rate_length, np.float64)
+var_mean = np.zeros(rate_length, np.float64)
+log_var_scale = -5* np.ones(rate_length, np.float64)
 
 
 init_ls = np.array([200], np.float64)
@@ -143,8 +143,8 @@ init_marg_var = np.array([.1], np.float64)
 init_alpha = np.array([1], np.float64)
 init_tau = np.array([.05], np.float64)
 
-full_params = np.concatenate([loc, log_scale, init_rho,init_ls,init_marg_var, init_alpha,   init_tau])
-#full_params = np.concatenate([loc, log_scale, init_rho,init_ls])
+full_params = np.concatenate([var_mean, log_var_scale, init_rho,init_ls,init_marg_var, init_alpha,   init_tau])
+#full_params = np.concatenate([var_mean, _scale, init_rho,init_ls])
 
 log_joint_fullparams = lambda samples, hyperparams: log_joint(samples, hyperparams, ca_obj, Fourier = True, learn_hyparams = True, Bf=Bffts[0], wwnrm = wwnrm, nxcirc = nxcirc)
 
@@ -195,7 +195,7 @@ def step(i, key, opt_state):
 
 
 elbos = []
-for i in range(25000):
+for i in range(5000):
 	key, subkey = random.split(key)
 	opt_state = step(i, key, opt_state)
 	if i % 100 == 0:
