@@ -19,7 +19,12 @@ def log_poisson_1D(y, rate):
 
 def log_gaussian_1D(y, mu, sig2):
     return -0.5 * np.log(2.0 * np.pi * sig2) -0.5 * (y - mu)**2 / sig2
-
+def softplus(x):
+    lt_34 = (x >= 34)
+    gt_n37 = (x <= -30.8)
+    neither_nor = np.logical_not(np.logical_or(lt_34, gt_n37))
+    rval = np.where(gt_n37, 0., x)
+    return np.where(neither_nor, np.log(1 + np.exp(x)), rval)
 
 
 
@@ -118,54 +123,73 @@ class CA_Emissions():
 
         spikes = onp.random.poisson(rate)
 
-
         roots = onp.exp(-self.dt/np.array(self.AR_params)) ### here self.AR_params is an n-length vector where n is the AR process order
         coeffs = onp.poly(roots) #find coefficients with of a polynomial with roots of params
-        z = lfilter([self.alpha],coeffs,spikes) #generate AR-n process with inputs spk_counts, where self.alpha is the CA increase due to a spike
+        #trace = lfilter([self.alpha],coeffs,noisey_spks) #generate AR-n process with inputs spk_counts, where self.alpha is the CA increase due to a spike
+        # Generate Ca data
+        Yobs = onp.zeros(np.shape(spikes))
+        Yobs[:,0] = self.alpha * spikes[:,0] +  onp.sqrt(self.Gauss_sigma) * onp.random.randn()
 
+        for t in range(1,self.Tps):
+            Yobs[:,t] = self.alpha * spikes[:,t] + onp.exp(-self.dt/np.array(self.AR_params)) * Yobs[:,t-1] +  onp.sqrt(self.Gauss_sigma) * onp.random.randn()
 
         # q = [exp(-self.dt/tau_samp),exp(-self.dt/tau_samp_b)]
         # a_true = onp.poly(q)
         # z = filter(1,a_true,spcounts);
         # ##### To Do: AR2 PROCESS HERE!
 
-        trace = z + onp.sqrt(self.Gauss_sigma)*onp.random.randn(onp.size(z))#add noise
 
-        return trace, spikes
+
+        return Yobs, spikes
 
 
     def log_likelihood(self, Y, X, S = 10, learn_model_params = False):
 
         '''
         #Inputs
-        Y: Calcium trace time series (possibly batched over neurons)
-        X: log-rate time series (possibly batched over neurons)
+        Y: Calcium trace time series (now with batching over neurons!)
+        X: log-rate time series (now with batching over neurons!)
 
         '''
+        # if np.array(self.alpha).ndim == 0:
+        #     self.alpha = np.expand_dims(self.alpha, axis = 0)
+        # if np.array(self.Gauss_sigma).ndim == 0:
+        #     self.Gauss_sigma = np.expand_dims(self.Gauss_sigma, axis = 0)
+
         try:
-            self.data #this should pre-set a number of parameters for optimization, as well.
+             np.shape(X) == np.shape(Y) #this should pre-set a number of parameters for optimization, as well.
         except AttributeError:
-            print("please set data first")
+             print("X and Y must be same shape")
 
+        if X.ndim == 2:
+            n_neurs = np.shape(X)[0]
+        else:
+            n_neurs = 1
+            X = np.expand_dims(X, axis = 0)
 
-        AR_order = np.size(self.AR_params)
-        
-        # if learn_model_params:
-        #     self.Gauss_sigma, self.alpha, self.AR_params = X[-(AR_order + 2):]
+        #AR_order = np.size(self.AR_params)
+        AR_order = 1 #FOR NOW....This is very annoying cause of casting. On the line below all the object attributes become of size n_neurons
+
+        if learn_model_params:
+            self.Gauss_sigma, self.alpha, self.AR_params = X[:,-(AR_order + 2):-(AR_order + 1)].T[0], X[:,-(AR_order + 1):-(AR_order)].T[0], X[:,-AR_order:].T[0]
+            # if AR_order == 1 & n_neurs == 1:
+            #     self.AR_params = [self.AR_params]
+
 
       
-
+        
 
 
 
 
         ##### do Poiss part 
-        rate = self.mean(X[:(self.Tps)]) #convert to rate given dt
+        rate = self.mean(X[:,:(self.Tps)]) #convert to rate given dt
 
 
         #  Compute Poisson log-probability for each rate, for each spike count in spkvect
-        spk_vec = np.array([np.arange(S+1)])
-        logpoisspdf_mat = log_poisson_1D(spk_vec, rate[:,None])
+        spk_vec = np.tile(np.arange(S+1),[n_neurs, 1])
+        logpoisspdf_mat = log_poisson_1D(spk_vec[:,None,:], rate[:,:,None])
+
 
 
 
@@ -173,25 +197,24 @@ class CA_Emissions():
         ########### general purpose AR from data_mat (to do) #############       
 
 
-        padded_Y = np.pad(Y,[AR_order, 0])
+        padded_Y = np.pad(Y,[(0, 0), (AR_order,0)], mode='constant')
         mu = np.zeros(np.shape(Y))
         for i in np.arange(AR_order):
-            mu += padded_Y[AR_order -i -1:-i -1]*self.AR_params[i] 
-
-        mu  = mu[:,None] + self.alpha*spk_vec
+            mu += padded_Y[:,AR_order -i -1:-i -1]*self.AR_params[i] 
 
 
+
+        mu  = mu[:,:,None] + (self.alpha[:,None]*spk_vec)[:,None,:]
 
 
 
         #  Compute joint log-probability of spike counts and Gaussian noise. Careful about the trimming here.....
-        import ipdb; ipdb.set_trace()
 
-        loglivec = sp.special.logsumexp(logpoisspdf_mat + log_gaussian_1D(Y[:,None], mu, self.Gauss_sigma), axis = 1)
 
+        loglivec = sp.special.logsumexp(logpoisspdf_mat + log_gaussian_1D(Y[:,:,None], mu, self.Gauss_sigma[:,None,None]), axis = 2)
+        #import ipdb; ipdb.set_trace()
         #  sum up over time bins
-        logli = np.sum(loglivec) # sum up and take negative 
-
+        logli = np.sum(loglivec) # sum up over time and neurons
         return(logli)
 
         # elif self.AR2:
