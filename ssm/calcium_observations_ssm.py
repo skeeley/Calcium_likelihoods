@@ -34,8 +34,8 @@ class CalciumEmissions(_LinearEmissions):
         self.As = np.abs(npr.randn(1, N)) # autoregressive component must be positive!
         self.inv_etas = -4 + npr.randn(1, N) 
 
-        # # Shrink the eigenvalues of the A matrices to avoid instability.
-        # # Since the As are diagonal, this is just a clip.
+        # Shrink the eigenvalues of the A matrices to avoid instability.
+        # Since the As are diagonal, this is just a clip.
         self.As = np.clip(self.As, -1.0 + 1e-8, 1 - 1e-8)
 
         # spike part of mean
@@ -83,7 +83,6 @@ class CalciumEmissions(_LinearEmissions):
         # compute log likelihood, marginalizing out the spikes
         outg = log_gaussian_1D(data[:,None,:,None], mus, sig2s[None,:,:,None])
         outp = log_poisson_1D(s[None,None,None,:], lambdas[:,:,:,None])
-        # import ipdb; ipdb.set_trace()
         lls = logsumexp(outg + outp, axis=3) # marginalize over unseen spikes here
 
         # return np.sum(lls) # sum across all neurons and time points 
@@ -100,12 +99,11 @@ class CalciumEmissions(_LinearEmissions):
         z = np.zeros_like(z, dtype=int)
 
         # firing rates
-        # import ipdb; ipdb.set_trace()
         lambdas = self.mean(self.forward(x, input, tag)) 
 
         # sample spikes
         spikes = npr.poisson(lambdas)
-        # import ipdb; ipdb.set_trace()
+
         # autoregressive parameters
         etas = np.exp(self.inv_etas)
         mus = np.zeros_like(lambdas) # start with zero mean
