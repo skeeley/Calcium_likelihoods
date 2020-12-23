@@ -182,7 +182,7 @@ _, wwnrm, Bffts, nxcirc = gpf.comp_fourier.conv_fourier([samp_data[0]], ca_obj.T
 N_four = Bffts[0].shape[0]
 
 
-num_samples = 10
+num_samples = 15
 
 rate_length = N_four
 var_mean = np.zeros(rate_length*n_lats, np.float64)
@@ -235,7 +235,7 @@ varobjective, gradient, unpack_params = bbvi(log_joint_fullparams, rate_length*n
 
 ###### ADAM #############
 
-opt_init, opt_update, opt_get_params = optimizers.adam(step_size=.005)
+opt_init, opt_update, opt_get_params = optimizers.adam(step_size=.002)
 opt_state = opt_init(full_params)
 
 key = random.PRNGKey(10003)
@@ -251,7 +251,7 @@ def step(i, key, opt_state):
 
 
 elbos = []
-for i in range(5000):
+for i in range(6000):
 	key, subkey = random.split(key)
 	opt_state = step(i, key, opt_state)
 	if i % 100 == 0:
@@ -275,17 +275,17 @@ recon_traces = softplus(loadings_hat@recon_latent)
 
 
 row= 2
-column = 10
+column = 5
 
 #neuron 1
 for i in np.arange(column):
 
   plt.subplot(row,column,i+1)
-  plt.plot(recon_traces[i+5].T,'k')
-  plt.ylim([0,15])
-  plt.plot(x[i+5].T,'g')
+  plt.plot(recon_traces[i+10].T,'k')
+  plt.ylim([0,50])
+  plt.plot(x[i+10].T,'g')
   plt.subplot(row,column,i+column+1)
-  plt.plot(samp_data[i+5].T)
+  plt.plot(samp_data[i+10].T)
   plt.ylim([-0.5,5])
   #hist = sum(y_test_for_honeurs[:,neur,:])/(D-n_hos)
 

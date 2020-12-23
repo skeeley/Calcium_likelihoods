@@ -74,6 +74,8 @@ class CA_Emissions():
 
         if np.shape(data)[-1] != self.Tps:
             raise ValueError("data should be the same length as T in the calcium class, got {0}".format(np.shape(data)[-1]))
+
+
         self.data = data
 
         #Isolate calcium traces offset by correct index for AR1 and AR2
@@ -88,6 +90,9 @@ class CA_Emissions():
 
 
         b = onp.zeros([AR_order+1, self.Tps+AR_order,1+S])
+
+
+
         for i in onp.arange(AR_order+1):
             b[i, (-i+AR_order):self.Tps+(1-i),:] = self.data[0][:,None]
 
@@ -131,7 +136,7 @@ class CA_Emissions():
         return trace, spikes
 
 
-    def log_likelihood(self,params, learn_hyparams = False):
+    def log_likelihood(self,params, learn_model_params = False):
         try:
             self.data #this should pre-set a number of parameters for optimization, as well.
         except AttributeError:
@@ -140,7 +145,7 @@ class CA_Emissions():
 
         AR_order = np.size(self.AR_params)
         
-        if learn_hyparams:
+        if learn_model_params:
             self.Gauss_sigma, self.alpha, self.AR_params = params[-(AR_order + 2):]
 
       
@@ -149,8 +154,11 @@ class CA_Emissions():
         ##### do Poiss part 
         rate = self.mean(params[:(self.Tps)]) #convert to rate given dt
 
+
         #  Compute Poisson log-probability for each rate, for each spike count in spkvect
         logpoisspdf_mat = log_poisson_1D(self.spk_vec, rate[:,None])
+
+
 
 
         ########### general purpose AR from data_mat (to do) #############       

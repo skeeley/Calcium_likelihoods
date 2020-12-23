@@ -9,6 +9,8 @@ from scipy.signal import lfilter
 
 import jax
 import jax.numpy as np
+import jax.numpy.random as npr
+
 # Current convention is to import original numpy as "onp"
 import numpy as onp
 
@@ -23,7 +25,6 @@ def log_gaussian_1D(y, mu, sig2):
 
 class CA_Emissions():
 
-    # ---- Create struct and make stimulus design matrix ---------------------
 
     def __init__(
         self,
@@ -33,8 +34,8 @@ class CA_Emissions():
         max_spk: int = 10,
         Gauss_sigma: float = 0.2,
         T: int = 200, #initialize to 100 timesteps
-        AR1: bool = True,
-        AR2: bool = False,
+        lags: int = 1
+        As = None
         link = "log"
     ):
 
@@ -55,10 +56,11 @@ class CA_Emissions():
         self.alpha = alpha
         self.max_spk = max_spk
         self.Gauss_sigma = Gauss_sigma
-
+        self.nlags = nlags
         self.T = T
-        self.AR1 = AR1
-        self.AR2 = AR2
+        if self.As is None:
+            self.As = np.abs(npr.randn(lags, N)) # autoregressive component must be positive!
+        #self.inv_etas = -4 + npr.randn(1, N) 
 
 
         mean_functions = dict(
@@ -78,28 +80,36 @@ class CA_Emissions():
         self.data = data
 
 
-    def sample_data(self, rate, tau_samp = self.tau, alpha_samp = samp.alpha, sigma_samp = self.Gauss_sigma):
+    def sample_data(self, rate, lags = self.lags, alpha_samp = samp.alpha, sigma_samp = self.Gauss_sigma):
         '''
         Generate simulated data with default class params. Feel free to change if needed. Can be AR1 or AR2
         '''
-
+        N, T = rate.shape[0], self.T
         if np.shape(rate)[-1] != self.T:
             raise ValueError("rate should be the same length as T in the calcium class, got {0}".format(np.shape(data)[-1]))
 
 
         spikes = npr.poisson(rate)
+        mus = np.zeros_like(spikes)
+        y = np.zeros((N, T))
 
-        if self.AR1: 
-            z= lfilter(alpha_samp,[1,-np.exp(-self.dt/tau_samp)],spikes)
-            trace = z + np.sqrt(sigma_samp)*np.random.randn(np.size(z))#add noise
+        y[0:L] = mus[0:lags, N] + sigma_samp * npr.randn(lags, N)
+        for t in range(lags, T):
+            for l in range(lags):
+                Al = self.As[:, l:(l + 1)]
+                mus_ar= mus_ar + np.dot(y[lags-l-1:-l-1], Al.T)
+                
+            y[t] =  mus_ar + alpha_samp * spikes[:,t] + sigma_samp* npr.randn(N) 
+        return y
+        # if self.AR1: 
+        #     z= lfilter(alpha_samp,[1,-np.exp(-self.dt/tau_samp)],spikes)
+        #     trace = z + np.sqrt(sigma_samp)*np.random.randn(np.size(z))#add noise
 
 
 
-        elif self.AR2:  
-            a = 0
-            ##### To Do: AR2 PROCESS HERE!
-
-        return trace
+        # elif self.AR2:  
+        #     a = 0
+        #     ##### To Do: AR2 PROCESS HERE!
 
 
     def log_likelihood(self,rate_param, S = 10):
@@ -132,8 +142,6 @@ class CA_Emissions():
 
             #  Compute joint log-probability of spike counts and Gaussian noise
             logpjoint = logpoisspdf_mat + self.Gauss_ll
-
-
 
             loglivec = np.logsumexp(logpjoint, axis = 1)
 
