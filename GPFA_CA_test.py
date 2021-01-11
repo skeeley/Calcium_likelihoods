@@ -109,7 +109,7 @@ def log_joint(Y, X,  model_params, ca_obj,  n_lats, Fourier = False, nxcirc = No
 
 
 	else:
-		K = make_cov(ca_obj.Tps, model_params[0], model_params[1]) + np.eye(ca_obj.Tps)*1e-2
+		K = make_cov(ca_obj.Tps, model_params[0], model_params[1]) + np.eye(ca_obj.Tps)*1e-2 #need heavy regularization here. (might be differnet for different opt params)
 		log_prior = calc_gp_prior(X, K)
 		if learn_model_params :
 			params = np.append(X, model_params[2:])
@@ -119,18 +119,20 @@ def log_joint(Y, X,  model_params, ca_obj,  n_lats, Fourier = False, nxcirc = No
 	return log_prior + ll
 
 timepoints = 1000
-lscs = [200,100,400]
-n_lats = 3
-n_neurons = 35
-loadings = onp.random.randn(n_neurons,np.size(lscs))*10
+lscs = [200,100]
+n_lats = 2
+n_neurons = 20
+loadings = onp.random.randn(n_neurons,np.size(lscs))*2+1
 latents = generate_latents(lscs, timepoints)
 full_rate = loadings@latents 
-x= np.array(softplus(full_rate))
+x= np.array(softplus(full_rate)) 
 #y = np.random.poisson(x)
 
 # rate = .1*np.ones(timepoints)#generate poisson rate
 
-ca_obj = CA_Emissions(AR_params = [.1], Gauss_sigma = np.array([0.01]), alpha = np.array([1]),link = "softplus",Tps = timepoints, dt = .01) #generate AR1 calcium object
+ca_obj = CA_Emissions(AR = 2, As = np.array([[1.81,-.82]]).T, Gauss_sigma = np.array([0.05]), alpha = np.array([1]),link = "softplus",Tps = timepoints, dt = .01) #generate AR1 calcium object
+#ca_obj = CA_Emissions(AR = 1, As = np.array([[.1]]).T, Gauss_sigma = np.array([0.01]), alpha = np.array([1]),link = "softplus",Tps = timepoints, dt = .01) #generate AR1 calcium object
+
 # plt.plot(ca_obj.sample_data(rate)[0][0:500])
 
 
@@ -182,24 +184,24 @@ _, wwnrm, Bffts, nxcirc = gpf.comp_fourier.conv_fourier([samp_data[0]], ca_obj.T
 N_four = Bffts[0].shape[0]
 
 
-num_samples = 15
+num_samples = 25
 
 rate_length = N_four
 var_mean = np.zeros(rate_length*n_lats, np.float64)
 log_var_scale = -5* np.ones(rate_length*n_lats, np.float64)
 
 
-init_ls = np.array([200,200,200], np.float64)
+init_ls = np.array([200,100], np.float64)
 init_loadings = np.zeros(n_lats*n_neurons, np.float64)/n_neurons
 
-init_marg_var = np.array([.01], np.float64)
+loginit_marg_var = np.log(np.array([.1], np.float64))
 init_alpha = np.array([1], np.float64)
-init_tau = np.array([np.exp(-(.01/.1))], np.float64)
+init_As = np.array([1.81,-.82], np.float64)
 
-ca_obj = CA_Emissions(AR_params = init_tau, Gauss_sigma = init_marg_var, alpha = init_alpha ,link = "softplus",Tps = timepoints, dt = .01) #generate AR1 calcium object
+ca_obj = CA_Emissions(AR = 2, As = np.array([init_As]).T, Gauss_sigma = np.exp(loginit_marg_var), alpha = init_alpha ,link = "softplus",Tps = timepoints, dt = .01) #generate AR1 calcium object
 
 
-full_params = np.concatenate([var_mean, log_var_scale, init_loadings,init_ls,init_marg_var, init_alpha,   init_tau])
+full_params = np.concatenate([var_mean, log_var_scale, init_loadings,init_ls,np.exp(loginit_marg_var), init_alpha,   init_As])
 #full_params = np.concatenate([var_mean, _scale, init_rho,init_ls])
 
 log_joint_fullparams = lambda samples, hyperparams: log_joint(samp_data, samples, hyperparams, ca_obj, n_lats, Fourier = True, learn_model_params  =True, Bf=Bffts[0], wwnrm = wwnrm, nxcirc = nxcirc)
@@ -235,7 +237,7 @@ varobjective, gradient, unpack_params = bbvi(log_joint_fullparams, rate_length*n
 
 ###### ADAM #############
 
-opt_init, opt_update, opt_get_params = optimizers.adam(step_size=.002)
+opt_init, opt_update, opt_get_params = optimizers.adam(step_size=.005)
 opt_state = opt_init(full_params)
 
 key = random.PRNGKey(10003)
@@ -251,7 +253,7 @@ def step(i, key, opt_state):
 
 
 elbos = []
-for i in range(6000):
+for i in range(1800):
 	key, subkey = random.split(key)
 	opt_state = step(i, key, opt_state)
 	if i % 100 == 0:
@@ -275,18 +277,18 @@ recon_traces = softplus(loadings_hat@recon_latent)
 
 
 row= 2
-column = 5
+column = 6
 
 #neuron 1
 for i in np.arange(column):
 
   plt.subplot(row,column,i+1)
   plt.plot(recon_traces[i+10].T,'k')
-  plt.ylim([0,50])
+  plt.ylim([0,12])
   plt.plot(x[i+10].T,'g')
   plt.subplot(row,column,i+column+1)
   plt.plot(samp_data[i+10].T)
-  plt.ylim([-0.5,5])
+  plt.ylim([-0.5,15])
   #hist = sum(y_test_for_honeurs[:,neur,:])/(D-n_hos)
 
 plt.subplot(row,column,0+1) 

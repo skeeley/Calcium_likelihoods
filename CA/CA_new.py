@@ -88,9 +88,14 @@ class CA_Emissions():
 
         N,T = np.shape(rate)
 
-        nlags = self.AR
-        if self.As is None:
-            self.As = np.abs(onp.random.randn(nlags,N))# autoregressive component must be positive!
+        nlags, As = self.AR, self.As
+        if As is None:
+            As = np.abs(onp.random.randn(nlags,N))# autoregressive component must be positive!
+
+
+        if onp.size(As) == nlags:
+            As = As*np.ones([nlags,N])
+
 
         if np.shape(rate)[-1] != self.Tps:
             raise ValueError("rate should be the same length as T in the calcium class, got {0}".format(np.shape(data)[-1]))
@@ -107,9 +112,11 @@ class CA_Emissions():
 
         for t in range(nlags, T):
             mus_ar= np.zeros((N))
+            np.shape(As)
             for l in range(nlags):
-                Al = self.As[l:(l + 1),:]
-                mus_ar= mus_ar + np.dot(y[:,t-l-1: t-l], Al.T)
+                #Al = As[l:(l + 1),:]
+                mus_ar= mus_ar + np.squeeze(y[:,t-l-1: t-l].T*As[l:(l+1),:]) #probably can do these previous two lines in a single matmul
+
             #print(np.shape(spikes[:,t]), np.shape(mus_ar), N, T, np.shape(y))
                 
             y[:,t] =  mus_ar + self.alpha * spikes[:,t] + self.Gauss_sigma* onp.random.randn(N) 
@@ -136,7 +143,26 @@ class CA_Emissions():
         #     self.alpha = np.expand_dims(self.alpha, axis = 0)
         # if np.array(self.Gauss_sigma).ndim == 0:
         #     self.Gauss_sigma = np.expand_dims(self.Gauss_sigma, axis = 0)
-        AR = self.AR
+
+        N,T = np.shape(Y)
+
+        #For now....On the line below all the object attributes become of size n_neurons. So I'm only taking values for the first neuron (not learning per-neuron ca params)
+        #This is beacuse X is a matrix of the lograte of the data of Neurons by time, when I append the hyperparams to learn at the end
+        #i'm appending for each column. If we want to end up extending each param to be learnable per-neuron, this will be  a good starting point.
+        #we might want to write a different function for this...outside of log_likelihood
+
+        nlags = self.AR
+
+
+        if learn_model_params:
+            self.Gauss_sigma, self.alpha, self.As = X[:,-(nlags + 2):-(nlags+ 1)][0].T, X[:,-(nlags+ 1):-(nlags)][0].T, X[:,-nlags:].T
+
+        As =  self.As
+
+
+        if onp.size(As) == nlags:
+            As = As*np.ones([nlags,N]) #broadcast across neurons if not specified per-neuron
+
         try:
              np.shape(X) == np.shape(Y) #this should pre-set a number of parameters for optimization, as well.
         except AttributeError:
@@ -148,21 +174,10 @@ class CA_Emissions():
             n_neurs = 1
             X = np.expand_dims(X, axis = 0)
 
-        #AR_order = np.size(self.AR_params)
-        #For now....This is very annoying cause of casting. On the line below all the object attributes become of size n_neurons
 
-        if learn_model_params:
-            self.Gauss_sigma, self.alpha, self.AR_params = X[:,-(AR + 2):-(AR+ 1)].T[0], X[:,-(AR+ 1):-(AR)].T[0], X[:,-AR:].T[0]
-            # if AR_order == 1 & n_neurs == 1:
-            #     self.AR_params = [self.AR_params]
 
 
       
-        
-
-
-
-
         ##### do Poiss part 
         rate = self.mean(X[:,:(self.Tps)]) #convert to rate given dt
 
@@ -176,10 +191,13 @@ class CA_Emissions():
 
 
         ########### general purpose AR from data_mat (to do) #############       
-        padded_Y = np.pad(Y,[(0, 0), (AR,0)], mode='constant')
+        padded_Y = np.pad(Y,[(0, 0), (nlags,0)], mode='constant')
         mu = np.zeros(np.shape(Y))
-        for i in np.arange(AR):
-            mu += padded_Y[:,AR_order -i -1:-i -1]*self.AR_params[i] 
+
+        for i in np.arange(nlags):
+            mu += (padded_Y[:,nlags -i -1:-i -1].T*As[i]).T #having a bit of trouble here with maybe jax (?). As[i] should just be 35, 
+                                                            #it's saying its 35,1 and not broadcasting correctly. The workaround is the transposes
+
 
 
 
