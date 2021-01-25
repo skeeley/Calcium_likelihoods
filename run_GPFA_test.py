@@ -32,7 +32,9 @@ config.update("jax_enable_x64", True)
 timepoints = 2000
 # rate = .1*np.ones(timepoints)#generate poisson rate
 
-ca_obj = CA_Emissions(AR_params = [.05], Gauss_sigma = np.array([0.05]),alpha = np.array([1]), Tps = timepoints, dt = .01) #generate AR1 calcium object
+ca_obj = CA_Emissions(Gauss_sigma = np.array([0.005]), alpha = np.array([1]), Tps = timepoints, dt = .01, AR = 2, As = np.array([[1.81,-.82 ]]).T) #generate AR1 calcium object
+ca_obj = CA_Emissions(Gauss_sigma = np.array([0.005]), alpha = np.array([1]), Tps = timepoints, dt = .01, AR = 1, As = np.array([[.99,]]).T) #generate AR1 calcium object
+
 # plt.plot(ca_obj.sample_data(rate)[0][0:500])
 
 
@@ -42,7 +44,7 @@ ca_obj = CA_Emissions(AR_params = [.05], Gauss_sigma = np.array([0.05]),alpha = 
 
 rate = np.exp(3*np.sin(np.arange(0,10,.005)))
 
-samp_data, spks = ca_obj.sample_data(np.expand_dims(rate*ca_obj.dt, axis = 0))
+samp_data, spks = ca_obj.sample_data(np.expand_dims(rate*.01, axis = 0))
 
 #ca_obj.set_data(samp_data)
 

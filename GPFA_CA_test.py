@@ -12,6 +12,7 @@ from jax.experimental import optimizers
 from jax.tree_util import tree_multimap  # Element-wise manipulation of 
 from jax import random
 from jax import jacfwd
+from functools import partial
 
 import GP_fourier as gpf 
 
@@ -71,7 +72,7 @@ def calc_gp_prior(X, K,n_lats, Fourier = False):
 	return total_prior
 
 
-def log_joint(Y, X,  model_params, ca_obj,  n_lats, Fourier = False, nxcirc = None, wwnrm = None, Bf = None, learn_model_params  = False, learn_per_neuron = False):
+def log_joint(Y, X,  model_params, ca_obj,  n_lats, nlags, Fourier = False, nxcirc = None, wwnrm = None, Bf = None, learn_model_params  = False, learn_per_neuron = False):
 
 	# logjoint here can work in fourier domain or not.
 	# If Fourier, need to pass in Fourier args (nxcirc, wwnrm, bf)
@@ -114,7 +115,7 @@ def log_joint(Y, X,  model_params, ca_obj,  n_lats, Fourier = False, nxcirc = No
 		if learn_model_params :
 			params = np.append(X, model_params[2:])
 
-	ll =ca_obj.log_likelihood(Y, rates,  learn_model_params  = learn_model_params )
+	ll =ca_obj.log_likelihood(Y, rates, nlags,  learn_model_params  = learn_model_params)
 
 	return log_prior + ll
 
@@ -198,17 +199,29 @@ loginit_marg_var = np.log(np.array([.1], np.float64))
 init_alpha = np.array([1], np.float64)
 init_As = np.array([1.81,-.82], np.float64)
 
-ca_obj = CA_Emissions(AR = 2, As = np.array([init_As]).T, Gauss_sigma = np.exp(loginit_marg_var), alpha = init_alpha ,link = "softplus",Tps = timepoints, dt = .01) #generate AR1 calcium object
+AR = 2
+nlags = AR
+
+ca_obj = CA_Emissions(AR = AR, As = np.array([init_As]).T, Gauss_sigma = np.exp(loginit_marg_var), alpha = init_alpha ,link = "softplus",Tps = timepoints, dt = .01) #generate AR1 calcium object
 
 
 full_params = np.concatenate([var_mean, log_var_scale, init_loadings,init_ls,np.exp(loginit_marg_var), init_alpha,   init_As])
 #full_params = np.concatenate([var_mean, _scale, init_rho,init_ls])
 
-log_joint_fullparams = lambda samples, hyperparams: log_joint(samp_data, samples, hyperparams, ca_obj, n_lats, Fourier = True, learn_model_params  =True, Bf=Bffts[0], wwnrm = wwnrm, nxcirc = nxcirc)
+# @partial(jit,static_argnums = (3,4,5))
+# def jit_log_joint(samp_data, samples, hyperparams, ca_obj, n_lats, nlags, Fourier = True, learn_model_params  =True, Bf=Bffts[0], wwnrm = wwnrm, nxcirc = nxcirc):
+# 	return(log_joint(samp_data, samples, hyperparams, ca_obj, n_lats, nlags, Fourier = True, learn_model_params  =True, Bf=Bffts[0], wwnrm = wwnrm, nxcirc = nxcirc))
 
-varobjective, gradient, unpack_params = bbvi(log_joint_fullparams, rate_length*n_lats, num_samples)
 
+log_joint_handle = lambda samp_data, samples, hyperparams, ca_obj, n_lats, nlags: log_joint(samp_data, samples, hyperparams, ca_obj, n_lats, nlags, Fourier = True, learn_model_params  =True, Bf=Bffts[0], wwnrm = wwnrm, nxcirc = nxcirc)
 
+jit_log_joint = jit(log_joint_handle, static_argnums=(3,4,5,))
+
+log_joint_fullparams = lambda samples, hyperparams: jit_log_joint(samp_data, samples, hyperparams, ca_obj, n_lats, nlags)
+
+varobjective, unpack_params = bbvi(log_joint_fullparams, rate_length*n_lats, num_samples) #first argument (log_joint_fullparams) has to be a function of two arguments in BBVI (else we change BBVI)
+
+#gradient = jit(grad(varobjective)) ###pulled jit out of BBVI. no jit used in any lower functions now. Should be able to call static_argnums from top level.
 
 
 ###### SGD #############
@@ -242,6 +255,7 @@ opt_state = opt_init(full_params)
 
 key = random.PRNGKey(10003)
 # Define a compiled update step
+#@jax.partial(jit, static_argnums = 3)
 @jit
 def step(i, key, opt_state):
 
@@ -310,21 +324,22 @@ plt.plot(latents.T,'g')
 #
 plt.subplot(3,1,1)
 plt.ylabel('True rate')
-plt.plot(np.arange(0,10,.005),rate)
+plt.plot(np.arange(0,timepoints),rate[0])
+plt.plot(np.arange(0,timepoints),recon_traces[0], 'k')
 plt.subplot(3,1,2)
-plt.plot(np.arange(0,10,.005),samp_data[1])
+plt.plot(np.arange(0,timepoints),spks[0])
 plt.ylabel('Spikes')
 plt.subplot(3,1,3)
-plt.plot(np.arange(0,10,.005),samp_data[0])
+plt.plot(np.arange(0,timepoints),samp_data[0])
 plt.ylabel('Ca activity')
 plt.xlabel('Time (sec)')
 
-plt.figure(2)
-plt.plot(np.arange(0,10,.005),rate)
-plt.plot(np.arange(0,10,.005),np.exp(time_domain_params))
-plt.legend(['True rate', 'Inferred rate'])
-plt.ylabel('Rate')
-plt.xlabel('Time (sec)')
+# plt.figure(2)
+# plt.plot(np.arange(0,10,.005),rate)
+# plt.plot(np.arange(0,10,.005),np.exp(time_domain_params))
+# plt.legend(['True rate', 'Inferred rate'])
+# plt.ylabel('Rate')
+# plt.xlabel('Time (sec)')
 
 plt.figure(3)
 plt.plot(-np.array(elbos))

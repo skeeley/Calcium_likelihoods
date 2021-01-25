@@ -95,9 +95,9 @@ def bbvi(logprob, N, num_samples):
 
         return -lower_bound
 
-    gradient = jit(grad(variational_objective))
+    #gradient = jit(grad(variational_objective))
 
-    return variational_objective, gradient, unpack_params
+    return variational_objective, unpack_params#, gradient, unpack_params
 
 
 

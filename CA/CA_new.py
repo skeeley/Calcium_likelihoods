@@ -131,7 +131,7 @@ class CA_Emissions():
 
 
 
-    def log_likelihood(self, Y, X, S = 10, learn_model_params = False):
+    def log_likelihood(self, Y, X, nlags, S = 10, learn_model_params = False):
 
         '''
         #Inputs
@@ -151,7 +151,6 @@ class CA_Emissions():
         #i'm appending for each column. If we want to end up extending each param to be learnable per-neuron, this will be  a good starting point.
         #we might want to write a different function for this...outside of log_likelihood
 
-        nlags = self.AR
 
 
         if learn_model_params:
@@ -167,6 +166,12 @@ class CA_Emissions():
              np.shape(X) == np.shape(Y) #this should pre-set a number of parameters for optimization, as well.
         except AttributeError:
              print("X and Y must be same shape")
+
+
+        try:
+             nlags == self.AR #this should pre-set a number of parameters for optimization, as well.
+        except AttributeError:
+             print("nlags argument and AR order must  be the same")
 
         if X.ndim == 2:
             n_neurs = np.shape(X)[0]
@@ -194,11 +199,12 @@ class CA_Emissions():
         padded_Y = np.pad(Y,[(0, 0), (nlags,0)], mode='constant')
         mu = np.zeros(np.shape(Y))
 
-        for i in np.arange(nlags):
-            mu += (padded_Y[:,nlags -i -1:-i -1].T*As[i]).T #having a bit of trouble here with maybe jax (?). As[i] should just be 35, 
-                                                            #it's saying its 35,1 and not broadcasting correctly. The workaround is the transposes
+        # for i in np.arange(nlags):
+        #     # mu += (padded_Y[:,nlags -i -1:-i -1].T*As[i]).T #having a bit of trouble here with maybe jax (?). As[i] should just be 35, 
+        #                                                     #it's saying its 35,1 and not broadcasting correctly. The workaround is the transposes
 
-
+        #     mu += (jax.lax.dynamic_slice(padded_Y,(:,nlags -i -1),[:,nlags]).T*As[i]).T 
+        mu = (padded_Y[:,nlags  -1: -1].T*As[0]).T + (padded_Y[:,nlags-2: -2].T*As[1]).T  #THIS ONE WORKS
 
 
         mu  = mu[:,:,None] + (self.alpha[:,None]*spk_vec)[:,None,:]
