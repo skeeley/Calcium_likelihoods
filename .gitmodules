@@ -2,3 +2,7 @@
 	path = GP_fourier
 	url = https://github.com/skeeley/GP_fourier.git
 	branch = master
+[submodule "ssm"]
+	path = ssm
+	url = https://github.com/davidzoltowski/ssm.git
+	branch = calciumobs
