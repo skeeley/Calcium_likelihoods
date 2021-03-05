@@ -203,10 +203,16 @@ class CA_Emissions():
         #     # mu += (padded_Y[:,nlags -i -1:-i -1].T*As[i]).T #having a bit of trouble here with maybe jax (?). As[i] should just be 35, 
         #                                                     #it's saying its 35,1 and not broadcasting correctly. The workaround is the transposes
 
-        #     mu += (jax.lax.dynamic_slice(padded_Y,(:,nlags -i -1),[:,nlags]).T*As[i]).T 
-        mu = (padded_Y[:,nlags  -1: -1].T*As[0]).T + (padded_Y[:,nlags-2: -2].T*As[1]).T  #THIS ONE WORKS
+        #     mu += (jax.lax.dynamic_slice(padded_Y,(:,nlags -i -1),[:,nlags]).T*As[i]).T
+        if nlags ==1:
+            mu = (padded_Y[:,nlags  -1: -1].T*As[0]).T
+        elif nlags == 2:
+            mu = (padded_Y[:,nlags  -1: -1].T*As[0]).T + (padded_Y[:,nlags-2: -2].T*As[1]).T  #THIS ONE WORKS, but I've hard-coded here for AR2
+                            #JAX is truly a pain. I am going to hard code in
+                            #AR 1 and AR2 for now....
 
-
+        else:
+            raise Exception("right now only AR1 and AR2 are viable choices.")
         mu  = mu[:,:,None] + (self.alpha[:,None]*spk_vec)[:,None,:]
 
 
