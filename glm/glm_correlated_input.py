@@ -151,10 +151,13 @@ nlfun = lambda x : softplus_stable(x, bias=bias, dt=dt)
 
 # Set GLM filter
 wfilt = conv2(npr.randn(D_in,1), gaussian_1D(np.arange(1, D_in+1), D_in/2, 2)[:,None,])[:,0]
+wfilt = 2*wfilt/np.linalg.norm(wfilt)
 wfilt2 = conv2(npr.randn(D_in,1), gaussian_1D(np.arange(1, D_in+1), D_in/2, 2)[:,None,])[:,0]
+wfilt2 = 2*wfilt2/np.linalg.norm(wfilt2)
+# wfilt2 *= 0.0
 # wDc = np.array([1.0])
 wDc = np.array([-5.5])
-w = np.concatenate((wDc, 2*wfilt/np.linalg.norm(wfilt), 2*wfilt2/np.linalg.norm(wfilt2)))
+w = np.concatenate((wDc, wfilt, wfilt2))
 
 # Generate simulated dataset
 # Xmat = np.hstack((np.ones((T,1)), npr.randn(T, D_in)))
@@ -258,7 +261,8 @@ gauss_sig2 = np.mean((Xmat@w_mle_gauss - Yobs)**2)
 Ytm1 = np.concatenate(([0], Yobs[:-1]))
 Xar = np.hstack((Xmat, Ytm1[:,None]))
 w_mle_gauss_ar = np.linalg.inv(Xar.T@Xar)@Xar.T@Yobs
-
+Xar_zero = np.hstack((Xmat[:,:1], Ytm1[:,None]))
+w_mle_gauss_ar_zero = np.linalg.inv(Xar_zero.T@Xar_zero)@Xar_zero.T@Yobs
 # poisson
 def poiss_log_like(w, Xmat, Ysps, nlfun):
     rate = nlfun(Xmat@w)[0]
@@ -284,7 +288,12 @@ def ar_log_like(w, Xar, Yobs, ar_sig2):
     ll = -0.5 * np.sum((Yobs - mu) **2 ) / ar_sig2
     ll += -0.5 * N_len * np.log(2.0 * np.pi * ar_sig2)
     return ll
-ar_log_like(w_mle_gauss_ar, Xar, Yobs, ar_sig2)
+ar_ll1 = ar_log_like(w_mle_gauss_ar, Xar, Yobs, ar_sig2)
+mu_ar_zero = Xar_zero @ w_mle_gauss_ar_zero
+ar_sig2_zero = np.mean((mu_ar_zero - Yobs)**2)
+ar_ll_zero = ar_log_like(w_mle_gauss_ar_zero, Xar_zero, Yobs, ar_sig2_zero)
+print("AR LL: ", ar_ll1)
+print("AR LL Zero: ", ar_ll_zero)
 
 plt.figure()
 plt.plot(w[1:], 'k-', label="True")
@@ -301,11 +310,11 @@ plt.legend()
 # plt.plot(w_mle, 'g', label="Calcium", alpha=0.7)
 # plt.legend()
 
-def normalize(w):
-    return (w - np.min(w)) / np.max(w)
-
 # def normalize(w):
-#     return w / np.max(np.abs(w))
+    # return (w - np.min(w)) / np.max(w)
+
+def normalize(w):
+    return w / np.max(np.abs(w))
 
 plt.figure()
 plt.plot( normalize(w[1:]), 'k-', label="True")
