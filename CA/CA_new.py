@@ -146,9 +146,9 @@ class CA_Emissions():
 
         N,T = np.shape(Y)
 
-        #For now....On the line below all the object attributes become of size n_neurons. So I'm only taking values for the first neuron (not learning per-neuron ca params)
+        #For now....On the line below all the object attributes become of size N (# neurons). So I'm only taking values for the first neuron (not learning per-neuron ca params)
         #This is beacuse X is a matrix of the lograte of the data of Neurons by time, when I append the hyperparams to learn at the end
-        #i'm appending for each column. If we want to end up extending each param to be learnable per-neuron, this will be  a good starting point.
+        #i'm appending for each column. If we want to end up extending each param to be learnable per-neuron, this will be a good starting point.
         #we might want to write a different function for this...outside of log_likelihood
 
 
@@ -156,16 +156,17 @@ class CA_Emissions():
         if learn_model_params:
             self.Gauss_sigma, self.alpha, self.As = X[:,-(nlags + 2):-(nlags+ 1)][0].T, X[:,-(nlags+ 1):-(nlags)][0].T, X[:,-nlags:].T
 
+
         As =  self.As
 
 
         if onp.size(As) == nlags:
             As = As*np.ones([nlags,N]) #broadcast across neurons if not specified per-neuron
-
-        try:
-             np.shape(X) == np.shape(Y) #this should pre-set a number of parameters for optimization, as well.
-        except AttributeError:
-             print("X and Y must be same shape")
+            
+#        try:
+#             np.shape(X) == np.shape(Y) #this should pre-set a number of parameters for optimization, as well.
+#        except AttributeError:
+#             print("X and Y must be same shape")
 
 
         try:
@@ -180,19 +181,14 @@ class CA_Emissions():
             X = np.expand_dims(X, axis = 0)
 
 
-
-
       
         ##### do Poiss part 
-        rate = self.mean(X[:,:(self.Tps)]) #convert to rate given dt
+        rate = self.mean(X[:,:(self.Tps)]) #convert to rate (softplus or exp)
 
 
         #  Compute Poisson log-probability for each rate, for each spike count in spkvect
         spk_vec = np.tile(np.arange(S+1),[n_neurs, 1])
         logpoisspdf_mat = log_poisson_1D(spk_vec[:,None,:], rate[:,:,None])
-
-
-
 
 
         ########### general purpose AR from data_mat (to do) #############       
@@ -218,24 +214,29 @@ class CA_Emissions():
 
 
         #  Compute joint log-probability of spike counts and Gaussian noise. Careful about the trimming here.....
-
-
         loglivec = sp.special.logsumexp(logpoisspdf_mat + log_gaussian_1D(Y[:,:,None], mu, self.Gauss_sigma[:,None,None]), axis = 2)
-        #import ipdb; ipdb.set_trace()
+
         #  sum up over time bins
         logli = np.sum(loglivec) # sum up over time and neurons
         return(logli)
 
-        # elif self.AR2:
-
-        #     b = np.zeros(self.Tps-2,1+S);
-        #     f2 =  b + self.data[:-2]
-        #     f1 =  b + self.data[2:-1]
-        #     f0 =  b + self.data[3:]
 
 
-            ##### To Do: AR2 PROCESS HERE!
+    def gauss_log_likelihood(self, Y, X, nlags, learn_model_params = False):
+        '''
+        #Inputs
+        Y: Calcium trace time series (now with batching over neurons)
+        X: log-rate time series (now with batching over neurons)
 
-
-
-
+        Right now code works for a single scalar gaussian variance.
+        '''
+        N,T = np.shape(Y)
+ 
+        if learn_model_params:
+            self.Gauss_sigma = X[:,-(nlags + 2):-(nlags+ 1)][0].T ### only worry about marginal variance for Gaussian noise
+            
+        X = X[:,:(self.Tps)] #extract only the latent time-series portion from the vector of learnable params (X)
+            
+        return  np.sum(log_gaussian_1D(Y, X, self.Gauss_sigma))
+        
+        
