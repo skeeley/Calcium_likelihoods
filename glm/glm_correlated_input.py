@@ -145,7 +145,7 @@ D_in = 19 # dimension of stimulus
 D = D_in*2 + 1 # total dims with bias
 T = 50000
 dt = 0.5
-bias = 0.001 * npr.randn(T)
+bias = 0.001 * npr.randn(T*2)
 nlfun = lambda x : softplus_stable(x, bias=bias, dt=dt)
 # nlfun = lambda x : exp_stable(x) 
 
@@ -164,12 +164,12 @@ w = np.concatenate((wDc, wfilt, wfilt2))
 
 Cov = np.array([[1.0, 0.4], [0.4, 1.0]])
 L = np.linalg.cholesky(Cov)
-Xstim = (L @ npr.randn(2, T)).T
+Xstim = (L @ npr.randn(2, T*2)).T # split in halfs
 
 from scipy.linalg import hankel
 Xmat1 = hankel(Xstim[:,0], Xstim[:,0][-19:])
 Xmat2 = hankel(Xstim[:,1], Xstim[:,1][-19:])
-Xmat = np.hstack((np.ones((T,1)), Xmat1, Xmat2))
+Xmat = np.hstack((np.ones((T*2,1)), Xmat1, Xmat2))
 # import ssm
 # from ssm import LDS 
 # from ssm.util import random_rotation
@@ -202,6 +202,10 @@ for t in range(1,T):
 
 # add in some random measurement noise (not part of generative model)
 Yobs = Yobs + 0.2 * npr.randn(*Yobs.shape)
+Yobs_test = Yobs[T:]
+Xmat_test = Xmat[T:]
+Yobs = Yobs[1:T]
+Xmat = Xmat[:T]
 
 # plot simulated data
 T_plot=1000
@@ -315,13 +319,15 @@ plt.legend()
 
 def normalize(w):
     return w / np.max(np.abs(w))
-
+def normalize(w):
+    return w / np.linalg.norm(w)
 plt.figure()
 plt.plot( normalize(w[1:]), 'k-', label="True")
 plt.plot( normalize(w_mle_poiss[1:]), 'r', label="Poisson", alpha=0.7)
 plt.plot( normalize(w_mle_gauss[1:]), 'b', label="Gaussian", alpha=0.7)
 plt.plot( normalize(w_mle_gauss_ar[1:-1]), 'c', label="AR", alpha=0.7)
 plt.plot( normalize(w_mle[1:]), 'g', label="Calcium", alpha=0.7)
+plt.title("normalized filters")
 plt.legend()
 
 # calcium pred
@@ -362,23 +368,31 @@ ca_pred = calcium_pred(w_mle, Xmat, Yobs, hyperparams_mle)
 plt.plot(ca_pred[plot_idx],'g',alpha=0.7)
 plt.xlim([0, T_plot])
 
+# plot simulated data
 T_plot=1000
 plot_idx = np.arange(T_plot)
 plt.figure()
-plt.subplot(311)
-plt.plot(R[plot_idx],color=[0.3,0.3,0.3])
+plt.subplot(411)
+plt.plot(Xstim[plot_idx],alpha=0.75)
 plt.xticks([])
 plt.xlim([0,T_plot])
-plt.ylabel("firing rate")
-plt.subplot(312)
-plt.plot(Ysps[plot_idx],color=[0.3,0.3,0.3])
+plt.title("stimulus")
+plt.subplot(412)
+plt.plot(R[plot_idx])
 plt.xticks([])
 plt.xlim([0,T_plot])
-plt.ylabel("spike counts")
-plt.subplot(313)
-plt.plot(Yobs[plot_idx],color=[0.3,0.3,0.3])
+plt.title("firing rate")
+plt.subplot(413)
+plt.plot(Ysps[plot_idx])
+plt.xticks([])
 plt.xlim([0,T_plot])
-plt.ylabel("calcium obs")
+plt.title("spike counts")
+plt.subplot(414)
+plt.plot(Yobs[plot_idx])
+plt.xlim([0,T_plot])
+plt.title("calcium obs")
+plt.tight_layout()
+
 ca_pred = calcium_pred(w_mle, Xmat, Yobs, hyperparams_mle)
 gauss_pred = Xmat@w_mle_gauss
 plt.plot(gauss_pred[plot_idx],'b',alpha=0.7)

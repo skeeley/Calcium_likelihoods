@@ -87,14 +87,21 @@ def nll_GLM_GanmorCalciumAR1(w, X, Y, hyperparams, nlfun, S=10):
     Output:
         negative log-likelihood, gradient, and Hessian
     """
-
     # unpack hyperparams
-    tau, alpha, sig2 = np.exp(hyperparams)
-
-    # compute AR(1) diffs
-    taudecay = np.exp(-1.0/tau) # decay factor for one time bin
-    Y = np.pad(Y, (1,0)) # pad Y by a time bin
-    Ydff = (Y[1:] - taudecay * Y[:-1]) / alpha
+    ar_coefs, log_alpha, log_sig2 = hyperparams
+    alpha = np.exp(log_alpha)
+    sig2 = np.exp(log_sig2)
+    p = ar_coefs.shape[0] # AR(p)
+    # compute AR(p) diffs
+    Ydecay = np.zeros_like(Y)
+    Y = np.pad(Y, (p,0)) # pad Y by p time bins
+    for i, ai in enumerate(ar_coefs):
+        Ydecay = Ydecay + ai * Y[p-1-i:-1-i]
+    # Ydecay2 = ar_coefs[0] * Y[1:-1]
+    # Ydecay2 = Ydecay2 + ar_coefs[1] * Y[:-2]
+    # print(np.linalg.norm(Ydecay - Ydecay2))
+    # import ipdb; ipdb.set_trace()
+    Ydff = (Y[p:] - Ydecay) / alpha
 
     # compute grid of spike counts
     ygrid = np.arange(0, S+1)
@@ -130,12 +137,13 @@ def nll_GLM_GanmorCalciumAR1(w, X, Y, hyperparams, nlfun, S=10):
     # return negL, gradient, H
 
 # Set calcium model hyperparams
-tau = 10.0        # decay in one time bin
-alpha = 1.25     # gain
+p = 2
+ar_coefs = np.array([1.51,-0.6])        # decay in one time bin
+alpha = 1.0     # gain
 # sig = 0.2      # stdev of Gaussian noise (in spike train space)
-sig2 = 0.01      # stdev of Gaussian noise (in spike train space)
+sig2 = 0.001      # stdev of Gaussian noise (in spike train space)
 sig = np.sqrt(sig2)   # variance of noise
-hyperparams = [tau,alpha,np.log(sig2)] 
+hyperparams = [ar_coefs,np.log(alpha),np.log(sig2)] 
 
 S = 10 # max spike count to consider
 ygrid = np.arange(0, S+1)
@@ -188,13 +196,12 @@ Ysps = npr.poisson(R)
 print("Max number of spikes: ", np.max(Ysps))
 
 # Generate Ca data
-Yobs = np.zeros(T)
-Yobs[0] = alpha * Ysps[0] +  np.sqrt(sig2) * npr.randn()
-for t in range(1,T):
-    Yobs[t] = alpha * Ysps[t] + np.exp(-1.0 / tau) * Yobs[t-1] + np.sqrt(sig2) * npr.randn()
+Yobs = np.zeros(T+p)
+for t in range(p,T+p):
+    ar_term = np.sum([ar_coefs[i] * Yobs[t-1-i] for i in range(p)])
+    Yobs[t] = alpha * Ysps[t-p] + ar_term + np.sqrt(sig2) * npr.randn()
+Yobs = Yobs[p:]
 
-# add in some random measurement noise (not part of generative model)
-Yobs = Yobs + 0.2 * npr.randn(*Yobs.shape)
 
 # plot simulated data
 T_plot=1000
@@ -227,7 +234,7 @@ def _obj(_params):
     hyperparams = _params[1]
     return nll_GLM_GanmorCalciumAR1(w, Xmat, Yobs, hyperparams, nlfun)
 
-hyperparams = [np.log(tau), np.log(alpha), np.log(sig2)]
+hyperparams = [ar_coefs, np.log(alpha), np.log(sig2)]
 _params = [w, hyperparams]
 
 from autograd.misc import flatten
@@ -238,160 +245,156 @@ grad_func = grad(obj)
 from scipy.optimize import minimize
 # params_init = 0.1 * npr.randn(params.shape[0])
 # params_init = flatten
-w_init = npr.randn(D)
-hyperparams_init = [np.log(1.0), np.log(1.0), np.log(1.0)]
-params_init = np.concatenate((w_init, hyperparams_init))
+w_init = 0.1 * npr.randn(D)
+ar_init = np.array([0.1,-0.1])
+alpha_init = 1.0
+sig2_init = 0.01
+hyperparams_init = [ar_init, np.log(alpha_init), np.log(sig2_init)]
+params_init, _ = flatten([w_init,hyperparams_init])
+# params_init = params + 0.0
 res = minimize(obj, x0=params_init, jac=grad_func)
 params_mle = res.x
 
 _params_mle = unflatten(params_mle)
-w_mle = _params_mle[0]
+w_mle_ar2 = _params_mle[0]
 hyperparams_mle = _params_mle[1]
 
-print("True hyperparams: ", np.exp(hyperparams))
-print("MLE  hyperparams : ", np.exp(hyperparams_mle))
+def convert_hyperparams(hyperparams):
+    ar_coefs, log_alpha, log_sig2 = hyperparams 
+    return ar_coefs[0], ar_coefs[1], np.exp(log_alpha), log_sig2
+
+print("True hyperparams: ", hyperparams)
+print("MLE  hyperparams : ", hyperparams_mle)
+
+plt.figure(figsize=[8,8])
+plt.subplot(321)
+plt.plot(w[1:], 'k-', label="True")
+plt.plot(w_mle_ar2[1:], 'g', label="Calcium AR(2)", alpha=0.7)
+# plt.plot(w_mle_1[1:], 'b', label="Calcium AR(1))", alpha=0.7)
+plt.legend()
+plt.title("w/o noise")
+plt.subplot(322)
+plt.plot(convert_hyperparams(hyperparams)[:3], convert_hyperparams(hyperparams_mle)[:3],'.')
+plt.xlim(plt.gca().get_ylim())
+plt.gca().axis("square")
+# plt.plot()
+plt.tight_layout()
+
+# add in some random measurement noise (not part of generative model)
+Yobs = Yobs + 0.2 * npr.randn(*Yobs.shape)
+
+# compute nll
+def _obj(_params):
+    w = _params[0]
+    hyperparams = _params[1]
+    return nll_GLM_GanmorCalciumAR1(w, Xmat, Yobs, hyperparams, nlfun)
+
+hyperparams = [ar_coefs, np.log(alpha), np.log(sig2)]
+_params = [w, hyperparams]
+
+from autograd.misc import flatten
+params, unflatten = flatten(_params)
+obj = lambda params : _obj(unflatten(params))
+grad_func = grad(obj)
+
+res = minimize(obj, x0=params_init, jac=grad_func)
+params_mle = res.x
+
+_params_mle = unflatten(params_mle)
+w_mle_ar2_noise = _params_mle[0]
+hyperparams_mle = _params_mle[1]
+print("MLE  hyperparams : ", hyperparams_mle)
+
+plt.subplot(323)
+plt.plot(w[1:], 'k-', label="True")
+plt.plot(w_mle_ar2_noise[1:], 'g', label="Calcium AR(2)", alpha=0.7)
+# plt.plot(w_mle_1[1:], 'b', label="Calcium AR(1))", alpha=0.7)
+plt.legend()
+plt.title("w/ noise")
+plt.subplot(324)
+plt.plot(convert_hyperparams(hyperparams)[:3], convert_hyperparams(hyperparams_mle)[:3],'.')
+# plt.xlim(plt.gca().get_ylim())
+# plt.gca().axis("square")
+# plt.plot()
+plt.tight_layout()
+# fit with AR(1)
+
+hyperparams = [np.array([1.0]), np.log(alpha), np.log(sig2)]
+_params = [w, hyperparams]
+
+def _obj(_params):
+    w = _params[0]
+    hyperparams = _params[1]
+    return nll_GLM_GanmorCalciumAR1(w, Xmat, Yobs, hyperparams, nlfun)
+
+from autograd.misc import flatten
+params, unflatten = flatten(_params)
+obj = lambda params : _obj(unflatten(params))
+grad_func = grad(obj)
+
+res = minimize(obj, x0=params_init, jac=grad_func)
+params_mle = res.x
+
+_params_mle = unflatten(params_mle)
+w_mle_ar1 = _params_mle[0]
+hyperparams_mle = _params_mle[1]
+print("MLE  hyperparams : ", hyperparams_mle)
+
+plt.subplot(325)
+plt.plot(w[1:], 'k-', label="True")
+plt.plot(w_mle_ar1[1:], 'g', label="Calcium AR(2)", alpha=0.7)
+# plt.plot(w_mle_1[1:], 'b', label="Calcium AR(1))", alpha=0.7)
+plt.legend()
+plt.title("AR (1)")
+# plt.subplot(326)
+# plt.plot(convert_hyperparams(hyperparams)[:3], convert_hyperparams(hyperparams_mle)[:3],'.')
+# # plt.xlim(plt.gca().get_ylim())
+# # plt.gca().axis("square")
+# # plt.plot()
+plt.tight_layout()
 
 
-# gaussian
-# w_mle_gauss = np.linalg.lstsq(Xmat.T@Xmat, Xmat.T@Yobs, rcond=None)
-w_mle_gauss = np.linalg.inv(Xmat.T@Xmat)@Xmat.T@Yobs
-gauss_sig2 = np.mean((Xmat@w_mle_gauss - Yobs)**2)
+# T_plot=1000
+# plot_idx = np.arange(T_plot)
+plt.figure()
+plt.subplot(411)
+plt.plot(Xstim[plot_idx])
+plt.xticks([])
+plt.xlim([0,T_plot])
+plt.title("stimulus")
+plt.subplot(412)
+plt.plot(R[plot_idx])
+plt.xticks([])
+plt.xlim([0,T_plot])
+plt.title("firing rate")
+plt.subplot(413)
+plt.plot(Ysps[plot_idx])
+plt.xticks([])
+plt.xlim([0,T_plot])
+plt.title("spike counts")
+plt.subplot(414)
+plt.plot(Yobs[plot_idx])
+plt.xlim([0,T_plot])
+plt.title("calcium obs")
+plt.tight_layout()
 
 Ytm1 = np.concatenate(([0], Yobs[:-1]))
-Xar = np.hstack((Xmat, Ytm1[:,None]))
-w_mle_gauss_ar = np.linalg.inv(Xar.T@Xar)@Xar.T@Yobs
-
-# poisson
-def poiss_log_like(w, Xmat, Ysps, nlfun):
-    rate = nlfun(Xmat@w)[0]
-    ll = np.sum(Ysps * np.log(rate) - rate - gammaln(Ysps+1.0))
-    return -1.0 * ll 
-poiss_grad_func = grad(poiss_log_like)
-res_poiss = minimize(poiss_log_like, args=(Xmat, Ysps, nlfun), x0=w_mle_gauss, jac=poiss_grad_func)
-w_mle_poiss = res_poiss.x
-
-def gauss_log_like(w, Xmat, Yobs, gauss_sig2):
-    mu = Xmat @ w
-    N_len = len(Yobs)
-    ll = -0.5 * np.sum((Yobs - mu) **2 ) / gauss_sig2
-    ll += -0.5 * N_len * np.log(2.0 * np.pi * gauss_sig2)
-    return ll
-
-mu_ar = Xar @ w_mle_gauss_ar
-ar_sig2 = np.mean((mu_ar - Yobs)**2)
-def ar_log_like(w, Xar, Yobs, ar_sig2):
-    mu = Xar @ w
-    N_len = len(Yobs)
-    ll = -0.5 * np.sum((Yobs - mu) **2 ) / ar_sig2
-    ll += -0.5 * N_len * np.log(2.0 * np.pi * ar_sig2)
-    return ll
-ar_log_like(w_mle_gauss_ar, Xar, Yobs, ar_sig2)
-
-plt.figure()
-plt.plot(w[1:], 'k-', label="True")
-plt.plot(w_mle_poiss[1:], 'r', label="Poisson", alpha=0.7)
-plt.plot(w_mle_gauss[1:], 'b', label="Gaussian", alpha=0.7)
-plt.plot(w_mle_gauss_ar[1:-1], 'c', label="AR", alpha=0.7)
-plt.plot(w_mle[1:], 'g', label="Calcium", alpha=0.7)
-plt.legend()
-
-
-# plt.figure()
-# plt.plot(w, 'k-', label="True")
-# plt.plot(w_mle_poiss, 'r', label="Poisson", alpha=0.7)
-# plt.plot(w_mle_gauss, 'b', label="Gaussian", alpha=0.7)
-# plt.plot(w_mle, 'g', label="Calcium", alpha=0.7)
-# plt.legend()
-
+Ytm2 = np.concatenate((np.array([0.0,0.0]), Yobs[:-2]))
+Xar = np.hstack((Xmat, Ytm1[:,None], Ytm2[:,None]))
+w_mle_gauss_ar2 = np.linalg.inv(Xar.T@Xar)@Xar.T@Yobs
+# Xar_zero = np.hstack((Xmat[:,:1], Ytm1[:,None]))
+# w_mle_gauss_ar_zero = np.linalg.inv(Xar_zero.T@Xar_zero)@Xar_zero.T@Yobs
 # def normalize(w):
-    # return (w - np.min(w)) / np.max(w)
-
-def normalize(w):
-    return w / np.max(np.abs(w))
+    # return w / np.max(np.abs(w))
 def normalize(w):
     return w / np.linalg.norm(w)
 plt.figure()
 plt.plot( normalize(w[1:]), 'k-', label="True")
-plt.plot( normalize(w_mle_poiss[1:]), 'r', label="Poisson", alpha=0.7)
-plt.plot( normalize(w_mle_gauss[1:]), 'b', label="Gaussian", alpha=0.7)
-plt.plot( normalize(w_mle_gauss_ar[1:-1]), 'c', label="AR", alpha=0.7)
-plt.plot( normalize(w_mle[1:]), 'g', label="Calcium", alpha=0.7)
-plt.legend()
-
-plt.figure()
-plt.plot(normalize(w), 'k-', label="True")
-plt.plot(normalize(w_mle_poiss), 'r', label="Poisson", alpha=0.7)
-plt.plot(normalize(w_mle_gauss), 'b', label="Gaussian", alpha=0.7)
-plt.plot(normalize(w_mle_gauss_ar[:-1]), 'c', label="AR", alpha=0.7)
-plt.plot(normalize(w_mle), 'g', label="Calcium", alpha=0.7)
-plt.title("normalized w/ mean")
-plt.legend()
-
-# calcium pred
-def log_poisson_1D(y, rate):
-    return y * np.log(rate) - rate - gammaln(y+1)
-
-# predicted calcium influx
-def calcium_pred(w, Xmat, Yobs, hyperparams, S=10):
-
-    ca_pred = np.zeros_like(Yobs)
-    rates = nlfun(Xmat@w)[0]
-    tau_mle, alpha_mle, sig2_mle = np.exp(hyperparams)
-    A_mle = np.array([np.exp(-1.0/tau_mle)])
-    alpha_mle = np.array([alpha_mle])
-    pad = np.zeros((1, 1))
-    # mus = np.concatenate((pad, A_mle[None, :] * Yobs[:-1, None]))
-    mus = np.zeros_like(Yobs)[:,None]
-
-    # marginalize over spikes
-    s = np.arange(0,S,1)
-    mus = mus[:,:,None] + alpha_mle[None,:,None] * s
-    outp = log_poisson_1D(s[None,None,:], rates[:,None,None])
-    mus = np.sum(mus * np.exp(outp), axis=2)[:,0]
-    return mus
-
-plt.figure()
-plt.plot(Yobs[plot_idx],'k')
-plt.ylabel("calcium obs")
-gauss_pred = Xmat@w_mle_gauss
-# plt.plot(gauss_pred[plot_idx],'b')
-gauss_pred_ar = Xar@w_mle_gauss_ar
-plt.plot(gauss_pred_ar[plot_idx],'b',alpha=0.7)
-
-plt.figure()
-plt.plot(Yobs[plot_idx],'k')
-plt.ylabel("calcium obs")
-ca_pred = calcium_pred(w_mle, Xmat, Yobs, hyperparams_mle)
-plt.plot(ca_pred[plot_idx],'g',alpha=0.7)
-plt.xlim([0, T_plot])
-
-T_plot=1000
-plot_idx = np.arange(T_plot)
-plt.figure()
-plt.subplot(311)
-plt.plot(R[plot_idx],color=[0.3,0.3,0.3])
-plt.xticks([])
-plt.xlim([0,T_plot])
-plt.ylabel("firing rate")
-plt.subplot(312)
-plt.plot(Ysps[plot_idx],color=[0.3,0.3,0.3])
-plt.xticks([])
-plt.xlim([0,T_plot])
-plt.ylabel("spike counts")
-plt.subplot(313)
-plt.plot(Yobs[plot_idx],color=[0.3,0.3,0.3])
-plt.xlim([0,T_plot])
-plt.ylabel("calcium obs")
-ca_pred = calcium_pred(w_mle, Xmat, Yobs, hyperparams_mle)
-gauss_pred = Xmat@w_mle_gauss
-plt.plot(gauss_pred[plot_idx],'b',alpha=0.7)
-plt.plot(ca_pred[plot_idx],'g',alpha=0.7)
-
-plt.figure()
-plt.plot( (Yobs - Ytm1)[plot_idx] , color='k', label="True", alpha=0.7)
-gauss_pred = Xmat[:,1:]@w_mle_gauss[1:]
-plt.plot(gauss_pred[plot_idx],'b', label="Gauss", alpha=0.7)
-plt.plot(ca_pred[plot_idx],'g', label="Calcium", alpha=0.7)
-plt.ylabel("$y_t - y_{t-1}$")
-plt.xlim([0,T_plot])
+# plt.plot( normalize(w_mle_poiss[1:]), 'r', label="Poisson", alpha=0.7)
+# plt.plot( normalize(w_mle_gauss[1:]), 'b', label="Gaussian", alpha=0.7)
+plt.plot( normalize(w_mle_ar2[1:]), 'r', label="Calcium AR(2), No Noise", alpha=0.7)
+plt.plot( normalize(w_mle_ar2_noise[1:]), 'b', label="Calcium AR(2), Noise", alpha=0.7)
+plt.plot( normalize(w_mle_ar1[1:]), 'g', label="Calcium AR(1), Noise", alpha=0.7)
+plt.plot( normalize(w_mle_gauss_ar2[1:-2]), 'c', label="AR(2)", alpha=0.7)
+plt.title("normalized filters")
 plt.legend()
