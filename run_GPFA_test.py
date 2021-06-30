@@ -32,8 +32,24 @@ config.update("jax_enable_x64", True)
 timepoints = 2000
 # rate = .1*np.ones(timepoints)#generate poisson rate
 
-ca_obj = CA_Emissions(Gauss_sigma = np.array([0.005]), alpha = np.array([1]), Tps = timepoints, dt = .01, AR = 2, As = np.array([[1.81,-.82 ]]).T) #generate AR1 calcium object
-ca_obj = CA_Emissions(Gauss_sigma = np.array([0.005]), alpha = np.array([1]), Tps = timepoints, dt = .01, AR = 1, As = np.array([[.99,]]).T) #generate AR1 calcium object
+##### randomly sample AR2 params with rise and decay
+tau1 = 15
+tau2 = 5
+
+#AR1= - onp.exp(-tau1) - onp.exp(-tau2)
+#AR2 = onp.exp( - tau1 - tau2)
+
+
+
+### need the negative for some reason ----
+
+AR1= onp.exp(-1/tau1) + onp.exp(-1/tau2)
+AR2 = -onp.exp( - 1/tau1 - 1/tau2)
+
+#### 1.81,-.82#### works
+####
+ca_obj = CA_Emissions(Gauss_sigma = np.array([0.005]), alpha = np.array([1]), Tps = timepoints, dt = .001, AR = 2, As = np.array([[AR1,AR2 ]]).T) #generate AR1 calcium object
+#ca_obj = CA_Emissions(Gauss_sigma = np.array([0.005]), alpha = np.array([1]), Tps = timepoints, dt = .01, AR = 1, As = np.array([[.99,]]).T) #generate AR1 calcium object
 
 # plt.plot(ca_obj.sample_data(rate)[0][0:500])
 
