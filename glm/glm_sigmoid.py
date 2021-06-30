@@ -71,6 +71,26 @@ def exp_stable(x, dt=1.0):
 
     return f, logf, df, ddf
 
+def logistic(x):
+    x = np.minimum(x, 100)
+    return 1. / (1 + np.exp(-x))
+
+# def logistic(x):
+#     "Numerically stable sigmoid function."
+
+#     out = np.zeros_like(x)
+#     out[x>=0] = 1. / (1 + np.exp(-x[x>=0]))
+#     out[x<0] = np.exp(x[x<0]) / (1 + np.exp(x[x<0]))
+#     return out
+    # if x >= 0:
+    #     z = np.exp(-x)
+    #     return 1 / (1 + z)
+    # else:
+    #     # if x is less than zero then z will be small, denom can't be
+    #     # zero because it's 1+z.
+    #     z = np.exp(x)
+    #     return z / (1 + z)
+
 def nll_GLM_GanmorCalciumAR1(w, X, Y, hyperparams, nlfun, S=10):
     """
     Negative log-likelihood for a GLM with Ganmor AR1 mixture model for calcium imaging data.
@@ -89,18 +109,22 @@ def nll_GLM_GanmorCalciumAR1(w, X, Y, hyperparams, nlfun, S=10):
     """
 
     # unpack hyperparams
-    tau, alpha, sig2 = np.exp(hyperparams)
+    tau, sig2, center, scale, c_max = np.exp(hyperparams)
 
     # compute AR(1) diffs
     taudecay = np.exp(-1.0/tau) # decay factor for one time bin
     Y = np.pad(Y, (1,0)) # pad Y by a time bin
-    Ydff = (Y[1:] - taudecay * Y[:-1]) / alpha
+    Ydff = (Y[1:] - taudecay * Y[:-1]) 
 
     # compute grid of spike counts
+    # scale via sigmoid function
     ygrid = np.arange(0, S+1)
+    yinc = np.concatenate(([0.], logistic((ygrid[1:] - center) / scale))) * c_max
+
+    # import ipdb; ipdb.set_trace()
 
     # Gaussian log-likelihood terms
-    log_gauss_grid = - 0.5 * (Ydff[:,None]-ygrid[None,:])**2 / (sig2 / alpha**2) - 0.5 * np.log(2.0 * np.pi * sig2)
+    log_gauss_grid = - 0.5 * (Ydff[:,None]-yinc[None,:])**2 / (sig2) - 0.5 * np.log(2.0 * np.pi * sig2)
     
     Xproj = X@w
     poissConst = gammaln(ygrid+1)
@@ -131,45 +155,41 @@ def nll_GLM_GanmorCalciumAR1(w, X, Y, hyperparams, nlfun, S=10):
 
 # Set calcium model hyperparams
 tau = 10.0        # decay in one time bin
-alpha = 1.25     # gain
+# alpha = 1.25     # gain
+scale = 1.0
+center = 3.0
+c_max = 6.0
 # sig = 0.2      # stdev of Gaussian noise (in spike train space)
 sig2 = 0.01      # stdev of Gaussian noise (in spike train space)
 sig = np.sqrt(sig2)   # variance of noise
-hyperparams = [tau,alpha,np.log(sig2)] 
+hyperparams = [np.log(tau),np.log(sig2),np.log(center),np.log(scale),np.log(c_max)] 
 
 S = 10 # max spike count to consider
 ygrid = np.arange(0, S+1)
 
 # Set up GLM
 D_in = 19 # dimension of stimulus
-D = D_in*2 + 1 # total dims with bias
+D = D_in + 1 # total dims with bias
 T = 50000
 dt = 0.5
-bias = 0.001 * npr.randn(T*2)
+bias = 0.0 * npr.randn(T)
 nlfun = lambda x : softplus_stable(x, bias=bias, dt=dt)
 # nlfun = lambda x : exp_stable(x) 
 
 # Set GLM filter
 wfilt = conv2(npr.randn(D_in,1), gaussian_1D(np.arange(1, D_in+1), D_in/2, 2)[:,None,])[:,0]
-wfilt = 2*wfilt/np.linalg.norm(wfilt)
-wfilt2 = conv2(npr.randn(D_in,1), gaussian_1D(np.arange(1, D_in+1), D_in/2, 2)[:,None,])[:,0]
-wfilt2 = 2*wfilt2/np.linalg.norm(wfilt2)
-# wfilt2 *= 0.0
 # wDc = np.array([1.0])
-wDc = np.array([-5.5])
-w = np.concatenate((wDc, wfilt, wfilt2))
+wDc = np.array([-3.5])
+w = np.concatenate((wDc, 2*wfilt/np.linalg.norm(wfilt)))
 
 # Generate simulated dataset
 # Xmat = np.hstack((np.ones((T,1)), npr.randn(T, D_in)))
 
-Cov = np.array([[1.0, 0.4], [0.4, 1.0]])
-L = np.linalg.cholesky(Cov)
-Xstim = (L @ npr.randn(2, T*2)).T # split in halfs
-
+Xstim = npr.randn(T,1)
 from scipy.linalg import hankel
 Xmat1 = hankel(Xstim[:,0], Xstim[:,0][-19:])
-Xmat2 = hankel(Xstim[:,1], Xstim[:,1][-19:])
-Xmat = np.hstack((np.ones((T*2,1)), Xmat1, Xmat2))
+Xmat = np.hstack((np.ones((T,1)), Xmat1))
+
 # import ssm
 # from ssm import LDS 
 # from ssm.util import random_rotation
@@ -196,38 +216,45 @@ print("Max number of spikes: ", np.max(Ysps))
 
 # Generate Ca data
 Yobs = np.zeros(T)
-Yobs[0] = alpha * Ysps[0] +  np.sqrt(sig2) * npr.randn()
+if Ysps[0] == 0:
+    Y_inc = 0.0
+else:
+    Y_inc = logistic((Ysps[0] - center) / scale) * c_max
+Yobs[0] = Y_inc +  np.sqrt(sig2) * npr.randn()
 for t in range(1,T):
-    Yobs[t] = alpha * Ysps[t] + np.exp(-1.0 / tau) * Yobs[t-1] + np.sqrt(sig2) * npr.randn()
+    if Ysps[t] == 0:
+        Y_inc = 0.0
+    else:
+        Y_inc = logistic((Ysps[t] - center) / scale) * c_max
+    Yobs[t] = Y_inc + np.exp(-1.0 / tau) * Yobs[t-1] + np.sqrt(sig2) * npr.randn()
 
 # add in some random measurement noise (not part of generative model)
-Yobs = Yobs + 0.2 * npr.randn(*Yobs.shape)
-Yobs_test = Yobs[T:]
-Xmat_test = Xmat[T:]
-Ysps_test = Ysps[T:]
-Yobs = Yobs[:T]
-Xmat = Xmat[:T]
-Ysps = Ysps[:T]
-nlfun = lambda x : softplus_stable(x, bias=bias[:T], dt=dt)
+Yobs = Yobs + 0.1 * npr.randn(*Yobs.shape)
 
 # plot simulated data
 T_plot=1000
 plot_idx = np.arange(T_plot)
 plt.figure()
-plt.subplot(311)
+plt.subplot(411)
+plt.plot(Xstim[plot_idx])
+plt.xticks([])
+plt.xlim([0,T_plot])
+plt.title("stimulus")
+plt.subplot(412)
 plt.plot(R[plot_idx])
 plt.xticks([])
 plt.xlim([0,T_plot])
-plt.ylabel("firing rate")
-plt.subplot(312)
+plt.title("firing rate")
+plt.subplot(413)
 plt.plot(Ysps[plot_idx])
 plt.xticks([])
 plt.xlim([0,T_plot])
-plt.ylabel("spike counts")
-plt.subplot(313)
+plt.title("spike counts")
+plt.subplot(414)
 plt.plot(Yobs[plot_idx])
 plt.xlim([0,T_plot])
-plt.ylabel("calcium obs")
+plt.title("calcium obs")
+plt.tight_layout()
 
 # compute nll
 def _obj(_params):
@@ -235,7 +262,8 @@ def _obj(_params):
     hyperparams = _params[1]
     return nll_GLM_GanmorCalciumAR1(w, Xmat, Yobs, hyperparams, nlfun)
 
-hyperparams = [np.log(tau), np.log(alpha), np.log(sig2)]
+# hyperparams = [np.log(tau), np.log(alpha), np.log(sig2)]
+hyperparams = [np.log(tau),np.log(sig2),np.log(center),np.log(scale),np.log(c_max)] 
 _params = [w, hyperparams]
 
 from autograd.misc import flatten
@@ -247,7 +275,11 @@ from scipy.optimize import minimize
 # params_init = 0.1 * npr.randn(params.shape[0])
 # params_init = flatten
 w_init = npr.randn(D)
-hyperparams_init = [np.log(1.0), np.log(1.0), np.log(1.0)]
+w_init[0] = -3.0
+hyperparams_init = [np.log(8.0), np.log(0.1), np.log(1.0), np.log(1.0), np.log(7.0)]
+# hyperparams_init = hyperparams 
+# hyperparams = [tau,np.log(sig2),center,np.log(scale),np.log(c_max)] 
+
 params_init = np.concatenate((w_init, hyperparams_init))
 res = minimize(obj, x0=params_init, jac=grad_func)
 params_mle = res.x
@@ -259,6 +291,15 @@ hyperparams_mle = _params_mle[1]
 print("True hyperparams: ", np.exp(hyperparams))
 print("MLE  hyperparams : ", np.exp(hyperparams_mle))
 
+# plot spike to increase curves 
+Ygrid = np.arange(0, 11)
+Yinc = np.concatenate(([0.], logistic((Ygrid[1:]-center)/scale)*c_max))
+center_mle, scale_mle, c_max_mle = np.exp(hyperparams_mle[2:])
+Yinc_mle = np.concatenate(([0.], logistic((Ygrid[1:]-center_mle)/scale_mle)*c_max_mle))
+plt.figure()
+plt.plot(Ygrid, Yinc)
+plt.plot(Ygrid, Yinc_mle)
+
 
 # gaussian
 # w_mle_gauss = np.linalg.lstsq(Xmat.T@Xmat, Xmat.T@Yobs, rcond=None)
@@ -268,8 +309,7 @@ gauss_sig2 = np.mean((Xmat@w_mle_gauss - Yobs)**2)
 Ytm1 = np.concatenate(([0], Yobs[:-1]))
 Xar = np.hstack((Xmat, Ytm1[:,None]))
 w_mle_gauss_ar = np.linalg.inv(Xar.T@Xar)@Xar.T@Yobs
-Xar_zero = np.hstack((Xmat[:,:1], Ytm1[:,None]))
-w_mle_gauss_ar_zero = np.linalg.inv(Xar_zero.T@Xar_zero)@Xar_zero.T@Yobs
+
 # poisson
 def poiss_log_like(w, Xmat, Ysps, nlfun):
     rate = nlfun(Xmat@w)[0]
@@ -285,7 +325,6 @@ def gauss_log_like(w, Xmat, Yobs, gauss_sig2):
     ll = -0.5 * np.sum((Yobs - mu) **2 ) / gauss_sig2
     ll += -0.5 * N_len * np.log(2.0 * np.pi * gauss_sig2)
     return ll
-gauss_log_like(w_mle_gauss, Xmat, Yobs, gauss_sig2)
 
 mu_ar = Xar @ w_mle_gauss_ar
 ar_sig2 = np.mean((mu_ar - Yobs)**2)
@@ -295,12 +334,7 @@ def ar_log_like(w, Xar, Yobs, ar_sig2):
     ll = -0.5 * np.sum((Yobs - mu) **2 ) / ar_sig2
     ll += -0.5 * N_len * np.log(2.0 * np.pi * ar_sig2)
     return ll
-ar_ll1 = ar_log_like(w_mle_gauss_ar, Xar, Yobs, ar_sig2)
-mu_ar_zero = Xar_zero @ w_mle_gauss_ar_zero
-ar_sig2_zero = np.mean((mu_ar_zero - Yobs)**2)
-ar_ll_zero = ar_log_like(w_mle_gauss_ar_zero, Xar_zero, Yobs, ar_sig2_zero)
-print("AR LL: ", ar_ll1)
-print("AR LL Zero: ", ar_ll_zero)
+ar_log_like(w_mle_gauss_ar, Xar, Yobs, ar_sig2)
 
 plt.figure()
 plt.plot(w[1:], 'k-', label="True")
@@ -309,6 +343,7 @@ plt.plot(w_mle_gauss[1:], 'b', label="Gaussian", alpha=0.7)
 plt.plot(w_mle_gauss_ar[1:-1], 'c', label="AR", alpha=0.7)
 plt.plot(w_mle[1:], 'g', label="Calcium", alpha=0.7)
 plt.legend()
+
 
 # plt.figure()
 # plt.plot(w, 'k-', label="True")
@@ -330,7 +365,15 @@ plt.plot( normalize(w_mle_poiss[1:]), 'r', label="Poisson", alpha=0.7)
 plt.plot( normalize(w_mle_gauss[1:]), 'b', label="Gaussian", alpha=0.7)
 plt.plot( normalize(w_mle_gauss_ar[1:-1]), 'c', label="AR", alpha=0.7)
 plt.plot( normalize(w_mle[1:]), 'g', label="Calcium", alpha=0.7)
-plt.title("normalized filters")
+plt.legend()
+
+plt.figure()
+plt.plot(normalize(w), 'k-', label="True")
+plt.plot(normalize(w_mle_poiss), 'r', label="Poisson", alpha=0.7)
+plt.plot(normalize(w_mle_gauss), 'b', label="Gaussian", alpha=0.7)
+plt.plot(normalize(w_mle_gauss_ar[:-1]), 'c', label="AR", alpha=0.7)
+plt.plot(normalize(w_mle), 'g', label="Calcium", alpha=0.7)
+plt.title("normalized w/ mean")
 plt.legend()
 
 # calcium pred
@@ -371,31 +414,23 @@ ca_pred = calcium_pred(w_mle, Xmat, Yobs, hyperparams_mle)
 plt.plot(ca_pred[plot_idx],'g',alpha=0.7)
 plt.xlim([0, T_plot])
 
-# plot simulated data
 T_plot=1000
 plot_idx = np.arange(T_plot)
 plt.figure()
-plt.subplot(411)
-plt.plot(Xstim[plot_idx],alpha=0.75)
+plt.subplot(311)
+plt.plot(R[plot_idx],color=[0.3,0.3,0.3])
 plt.xticks([])
 plt.xlim([0,T_plot])
-plt.title("stimulus")
-plt.subplot(412)
-plt.plot(R[plot_idx])
+plt.ylabel("firing rate")
+plt.subplot(312)
+plt.plot(Ysps[plot_idx],color=[0.3,0.3,0.3])
 plt.xticks([])
 plt.xlim([0,T_plot])
-plt.title("firing rate")
-plt.subplot(413)
-plt.plot(Ysps[plot_idx])
-plt.xticks([])
+plt.ylabel("spike counts")
+plt.subplot(313)
+plt.plot(Yobs[plot_idx],color=[0.3,0.3,0.3])
 plt.xlim([0,T_plot])
-plt.title("spike counts")
-plt.subplot(414)
-plt.plot(Yobs[plot_idx])
-plt.xlim([0,T_plot])
-plt.title("calcium obs")
-plt.tight_layout()
-
+plt.ylabel("calcium obs")
 ca_pred = calcium_pred(w_mle, Xmat, Yobs, hyperparams_mle)
 gauss_pred = Xmat@w_mle_gauss
 plt.plot(gauss_pred[plot_idx],'b',alpha=0.7)

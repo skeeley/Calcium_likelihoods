@@ -250,8 +250,8 @@ ar_init = np.array([0.1,-0.1])
 alpha_init = 1.0
 sig2_init = 0.01
 hyperparams_init = [ar_init, np.log(alpha_init), np.log(sig2_init)]
-# params_init, _ = flatten([w_init,hyperparams_init])
-params_init = params + 0.0
+params_init, _ = flatten([w_init,hyperparams_init])
+# params_init = params + 0.0
 res = minimize(obj, x0=params_init, jac=grad_func)
 params_mle = res.x
 
@@ -282,14 +282,8 @@ plt.tight_layout()
 
 # add in some random measurement noise (not part of generative model)
 Yobs_noiseless = np.copy(Yobs)
-# Yobs = Yobs + 0.1 * npr.randn(*Yobs.shape)
 Yobs = Yobs + 1.0 * npr.randn(*Yobs.shape)
 
-plt.figure()
-plt.plot(Yobs, 'g', alpha=0.75, label='noisy')
-plt.plot(Yobs_noiseless, 'r', alpha=0.75, label='noiseless')
-plt.xlim([0, 500])
-# plt.xlim([500, 500])
 # compute nll
 def _obj(_params):
     w = _params[0]
@@ -320,45 +314,8 @@ plt.legend()
 plt.title("w/ noise")
 plt.subplot(324)
 plt.plot(convert_hyperparams(hyperparams)[:3], convert_hyperparams(hyperparams_mle)[:3],'.')
-# plt.xlim(plt.gca().get_ylim())
-# plt.gca().axis("square")
-# plt.plot()
 plt.tight_layout()
 # fit with AR(1)
-
-hyperparams = [np.array([1.0]), np.log(alpha), np.log(sig2)]
-_params = [w, hyperparams]
-
-def _obj(_params):
-    w = _params[0]
-    hyperparams = _params[1]
-    return nll_GLM_GanmorCalciumAR1(w, Xmat, Yobs, hyperparams, nlfun)
-
-from autograd.misc import flatten
-params, unflatten = flatten(_params)
-obj = lambda params : _obj(unflatten(params))
-grad_func = grad(obj)
-
-res = minimize(obj, x0=params_init, jac=grad_func)
-params_mle = res.x
-
-_params_mle = unflatten(params_mle)
-w_mle_ar1 = _params_mle[0]
-hyperparams_mle = _params_mle[1]
-print("MLE  hyperparams : ", hyperparams_mle)
-
-plt.subplot(325)
-plt.plot(w[1:], 'k-', label="True")
-plt.plot(w_mle_ar1[1:], 'g', label="Calcium AR(2)", alpha=0.7)
-# plt.plot(w_mle_1[1:], 'b', label="Calcium AR(1))", alpha=0.7)
-plt.legend()
-plt.title("AR (1)")
-# plt.subplot(326)
-# plt.plot(convert_hyperparams(hyperparams)[:3], convert_hyperparams(hyperparams_mle)[:3],'.')
-# # plt.xlim(plt.gca().get_ylim())
-# # plt.gca().axis("square")
-# # plt.plot()
-plt.tight_layout()
 
 
 # T_plot=1000
@@ -401,64 +358,70 @@ plt.plot( normalize(w[1:]), 'k-', label="True")
 # plt.plot( normalize(w_mle_gauss[1:]), 'b', label="Gaussian", alpha=0.7)
 plt.plot( normalize(w_mle_ar2[1:]), 'r', label="Calcium AR(2), No Noise", alpha=0.7)
 plt.plot( normalize(w_mle_ar2_noise[1:]), 'b', label="Calcium AR(2), Noise", alpha=0.7)
-plt.plot( normalize(w_mle_ar1[1:]), 'g', label="Calcium AR(1), Noise", alpha=0.7)
-plt.plot( normalize(w_mle_gauss_ar2[1:-2]), 'c', label="AR(2)", alpha=0.7)
+# plt.plot( normalize(w_mle_ar1[1:]), 'g', label="Calcium AR(1), Noise", alpha=0.7)
+# plt.plot( normalize(w_mle_gauss_ar2[1:-2]), 'c', label="AR(2)", alpha=0.7)
 plt.title("normalized filters")
 plt.legend()
 
+plt.figure()
+plt.plot(Yobs_noiseless)
+plt.plot(Yobs)
+
 
 # try smoothing
-# import ssm 
-# from ssm.lds import LDS 
+import ssm 
+from ssm.lds import LDS 
 # lds = LDS(N=1, D=1, emissions="gaussian")
-# lds.dynamics.Sigmas = 1e-3 * np.ones((1,1,1))
-# lds.emissions.inv_etas = np.log(1.0) * np.ones((1,1))
-# Y_lds = Yobs[:, None]
-# elbos, q = lds.fit(Y_lds, method="laplace_em", num_iters=20, initialize=False)
-# q_x = q.mean_continuous_states[0]
-# y_smooth = lds.smooth(q_x, Y_lds)
-# plt.figure()
-# plt.plot(Yobs)
-# plt.plot(y_smooth[:,0])
-# plt.xlim([0,1000])
+lds = LDS(N=1, D=1, dynamics="higher_order", emissions="gaussian", dynamics_kwargs={'lags':2})
+lds.dynamics.Sigmas = 1e-3 * np.ones((1,1,1))
+lds.emissions.inv_etas = np.log(1.0) * np.ones((1,1))
+Y_lds = Yobs[:, None]
+elbos, q = lds.fit(Y_lds, method="laplace_em", num_iters=20, initialize=False)
+q_x = q.mean_continuous_states[0]
+y_smooth = lds.smooth(q_x, Y_lds)
+plt.figure()
+plt.plot(Yobs)
+plt.plot(y_smooth[:,0])
+plt.plot(Yobs_noiseless)
+plt.xlim([0,1000])
 
-# # compute nll
-# def _obj(_params):
-#     w = _params[0]
-#     hyperparams = _params[1]
-#     return nll_GLM_GanmorCalciumAR1(w, Xmat, y_smooth[:, 0], hyperparams, nlfun)
+# compute nll
+def _obj(_params):
+    w = _params[0]
+    hyperparams = _params[1]
+    return nll_GLM_GanmorCalciumAR1(w, Xmat, y_smooth[:, 0], hyperparams, nlfun)
 
-# hyperparams = [ar_coefs, np.log(alpha), np.log(sig2)]
-# _params = [w, hyperparams]
+hyperparams = [ar_coefs, np.log(alpha), np.log(sig2)]
+_params = [w, hyperparams]
 
-# from autograd.misc import flatten
-# params, unflatten = flatten(_params)
-# obj = lambda params : _obj(unflatten(params))
-# grad_func = grad(obj)
+from autograd.misc import flatten
+params, unflatten = flatten(_params)
+obj = lambda params : _obj(unflatten(params))
+grad_func = grad(obj)
 
-# from scipy.optimize import minimize
-# # params_init = 0.1 * npr.randn(params.shape[0])
-# # params_init = flatten
+# params_init = 0.1 * npr.randn(params.shape[0])
+# params_init = flatten
 # w_init = 0.1 * npr.randn(D)
 # ar_init = np.array([0.1,-0.1])
 # alpha_init = 1.0
 # sig2_init = 0.01
 # hyperparams_init = [ar_init, np.log(alpha_init), np.log(sig2_init)]
-# # params_init, _ = flatten([w_init,hyperparams_init])
+# params_init, _ = flatten([w_init,hyperparams_init])
 # params_init = params + 0.0
-# res = minimize(obj, x0=params_init, jac=grad_func)
-# params_mle = res.x
+res = minimize(obj, x0=params_init, jac=grad_func)
+params_mle = res.x
 
-# _params_mle = unflatten(params_mle)
-# w_mle_ar2_smooth = _params_mle[0]
-# hyperparams_mle = _params_mle[1]
+_params_mle = unflatten(params_mle)
+w_mle_ar2_smooth = _params_mle[0]
+hyperparams_mle = _params_mle[1]
+print("MLE hyperparams smooth: ", hyperparams_mle)
 
-# plt.figure()
-# plt.plot( normalize(w[1:]), 'k-', label="True")
-# # plt.plot( normalize(w_mle_poiss[1:]), 'r', label="Poisson", alpha=0.7)
-# # plt.plot( normalize(w_mle_gauss[1:]), 'b', label="Gaussian", alpha=0.7)
-# plt.plot( normalize(w_mle_ar2[1:]), 'r', label="Calcium AR(2), No Noise", alpha=0.7)
-# plt.plot( normalize(w_mle_ar2_noise[1:]), 'b', label="Calcium AR(2), Noise", alpha=0.7)
-# plt.plot( normalize(w_mle_ar2_smooth[1:]), 'g', label="Calcium AR(2), Smooth", alpha=0.7)
-# plt.title("normalized filters")
-# plt.legend()
+plt.figure()
+plt.plot( normalize(w[1:]), 'k-', label="True")
+# plt.plot( normalize(w_mle_poiss[1:]), 'r', label="Poisson", alpha=0.7)
+# plt.plot( normalize(w_mle_gauss[1:]), 'b', label="Gaussian", alpha=0.7)
+plt.plot( normalize(w_mle_ar2[1:]), 'r', label="Calcium AR(2), No Noise", alpha=0.7)
+plt.plot( normalize(w_mle_ar2_noise[1:]), 'b', label="Calcium AR(2), Noise", alpha=0.7)
+plt.plot( normalize(w_mle_ar2_smooth[1:]), 'g', label="Calcium AR(2), Smooth", alpha=0.7)
+plt.title("normalized filters")
+plt.legend()
