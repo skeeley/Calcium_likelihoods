@@ -20,6 +20,8 @@ import h5py
 fraw = h5py.File('/Users/skeeley/Desktop/AllenBrainData/103950_processed.h5', 'r')
 f = h5py.File('/Users/skeeley/Desktop/AllenBrainData/103950.h5', 'r')
 
+# fraw = h5py.File('/Users/skeeley/Desktop/AllenBrainData/103953_processed.h5', 'r')
+# f = h5py.File('/Users/skeeley/Desktop/AllenBrainData/103953.h5', 'r')
 
 
 
@@ -49,19 +51,26 @@ def create_Xstim_vec(binned_stims,sweep_order):
         if binned_stims[i] == 1:
             stimulus = sweep_order[j]
             j += 1
+    
 
     return xstimVec
 
 def create_Xstim_full(binned_stims,sweep_order, sweep_table):
 
-    xstimVec = np.zeros([np.shape(binned_stims)[0],4])
+    xstimVec = -np.ones([np.shape(binned_stims)[0],4])
     j = 0
-    stimulus = 0
+    stimulus = -1
     for i in np.arange(np.shape(binned_stims)[0]):
-        xstimVec[i,:] = sweep_table[:,int(stimulus)]
+        if int(stimulus) != -1: #check if no stim present
+            xstimVec[i,:] = sweep_table[:,int(stimulus)]
+
         if binned_stims[i] == 1:
             stimulus = sweep_order[j]
             j += 1
+        # if j == 700: ##cutting off the last stimulus 7 timebins after it turns on (which is abotu average number of timebins)
+        #     xstimVec[i+7,:] = -1
+        #     break
+
 
     return xstimVec
 
@@ -156,12 +165,12 @@ dfftimes = dfsamp*np.arange(np.size(Yobs))
 
 binned_spks = bin_spks(dfftimes, sptimes)
 
-# plt.figure()
-# plt.plot(dfftimes, Yobs)
-# plt.plot(dfftimes, binned_spks*.1)
-# plt.legend(['df/f', 'spks'])
-# plt.xlabel('time (s)')
-# plt.show()
+plt.figure()
+plt.plot(dfftimes, Yobs)
+plt.plot(dfftimes, binned_spks*.1)
+plt.legend(['df/f', 'spks'])
+plt.xlabel('time (s)')
+plt.show()
 
 
 
@@ -187,13 +196,15 @@ iStim_times[0::2] = iStimOn_times
 iStim_times[1::2] = iStimOff_times
 
 
-binned_stims = bin_spks(dfftimes, iStim_times)
+binned_stims = bin_spks(dfftimes, iStim_times) ## FIRST ONE IS -1 so probably it's initially a stim OFF!
 
 
 #xstimVec_raw = create_Xstim_vec(binned_stims,sweep_order)
 xstimVec_full =  create_Xstim_full(binned_stims,sweep_order, sweep_table)
-xstimVec_ori = xstimVec_full[:,0]  # order is orientation, phase, SF, contrast. First one shoudl be orientation but could be different per cell so worth checking
 
+
+xstimVec_ori = xstimVec_full[:,0]  # order is orientation, phase, SF, contrast. First one shoudl be orientation but could be different per cell so worth checking
+#this matrix is -1 where no orientation is presented, and is otherwise 0, 45, 90, or 135
 
 
 S = 10 # max spike count to consider
@@ -202,6 +213,7 @@ dt = dfsamp
 
 
 #make new xstim
+#set 1s for correct stimuli
 Xmat = np.zeros_like(xstimVec_full)
 Xmat[:,0][xstimVec_ori == 0] = 1
 Xmat[:,1][xstimVec_ori == 45] = 1
@@ -209,6 +221,12 @@ Xmat[:,2][xstimVec_ori == 90] = 1
 Xmat[:,3][xstimVec_ori == 135] = 1
 
 #Xmat should now have a 1 hot for when each of 4 unique orientations is present. 
+
+rate1 = np.sum(binned_spks[xstimVec_ori == 0])/np.shape(binned_spks[xstimVec_ori == 0]) 
+rate2 = np.sum(binned_spks[xstimVec_ori == 45])/np.shape(binned_spks[xstimVec_ori == 45])  
+rate3 = np.sum(binned_spks[xstimVec_ori == 90]) /np.shape(binned_spks[xstimVec_ori == 90]) 
+rate4 = np.sum(binned_spks[xstimVec_ori == 135]) /np.shape(binned_spks[xstimVec_ori == 135]) 
+rates = np.array([rate1,rate2,rate3,rate4])
 
 
 
@@ -442,6 +460,7 @@ plt.figure()
 #plt.plot(np.arange(1,20,1) * 1.0 / 30.0, normalize(sim_weights[1:]), 'k', label="sim")
 plt.plot(orient_vec , normalize(w_mle[:]), 'b', label="Ganmor")
 plt.plot(orient_vec,  normalize(w_mle_gauss[:]), 'g', label="Gaussian")
+plt.plot(orient_vec,  normalize(rates), 'k', label="normalized rates from spikes")
 plt.xlabel("orientation")
 plt.title("Normalized Filters")
 plt.legend()
