@@ -61,9 +61,9 @@ def bbvi(logprob, N, num_samples):
 			 - second argument is an indicator for iteration number (t)
 			 - third argument is a vector of hyperparams we wish to also optimize (hyperparams)
 			
-	N: number of variational parameters
+	N: number of variational parameters divided by 2
 	num_samples: Number of samples 
-	n_hyperparams: number of hyperparams to jointly optimize 
+	--- think i don't need this: n_hyperparams: number of hyperparams to jointly optimize ------
 
 	outputs:
 	Variational_objective: the elbo
