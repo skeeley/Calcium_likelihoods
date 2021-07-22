@@ -38,6 +38,19 @@ def create_Xstim_vec(binned_stims,sweep_order):
 
     return xstimVec
 
+def create_Xstim_full(binned_stims,sweep_order, sweep_table):
+
+    xstimVec = np.zeros([np.shape(binned_stims)[0],4])
+    j = 0
+    stimulus = 0
+    for i in np.arange(np.shape(binned_stims)[0]):
+        xstimVec[i,:] = sweep_table[:,int(stimulus)]
+        if binned_stims[i] == 1:
+            stimulus = sweep_order[j]
+            j += 1
+
+    return xstimVec
+
 
 #%%
 list(fraw.keys())
@@ -84,32 +97,12 @@ iStim_times[1::2] = iStimOff_times
 
 
 binned_stims = bin_spks(dfftimes, iStim_times)
-xstimVec = create_Xstim_vec(binned_stims,sweep_order)
-
-#dto = np.array(f['dto'])
-# ephys_raw = np.array(f['ephys_raw'])
-# sptimes = np.array(f['sptimes'])
-# StimTrig = np.array(fraw['StimTrig'][0])
-
-# spk = np.array(fraw['spk'])
-# Vmfd = np.array(fraw['Vmfd'][0])
-
-# etimes = np.arange(0,dte*np.size(Vmfd[528046:]),dte) ## from raw data
-# plt.plot(otimes_raw, f_cell)
-# plt.plot(etimes[1:], Vmfd[528046:]*100000)
 
 
-#otimes = np.arange(0,dto*np.size(trace),dto)
+#xstimVec_raw = create_Xstim_vec(binned_stims,sweep_order)
+xstimVec_full =  create_Xstim_full(binned_stims,sweep_order, sweep_table)
+xstimVec_ori = xstimVec_full[:,0]  # order is orientation, phase, SF, contrast. First one shoudl be orientation but could be different per cell so worth checking
 
-### subtract iframes[0]*dte from stimulus times, this should align with dff starting point. 
-
-### times in spktimes in the dff data is aligned with 0 probably...
-
-## primary trick is ephys offset, which is exactly algined with stimuli --- 
-# istimon[0] is going to be when the first stimulus goes on, istimoff[0] COULD be when the secondstimulus goes
-# on if there is no blank stimulus in between. There are 700 presentations of 64 possible stimuli. Each stimulus is a 
-# four vector (orientation, SF, etc,etc) with a -1 if there is no stimulus. There should be 
-plt.show()
 
 
 S = 10 # max spike count to consider
@@ -121,11 +114,11 @@ D = D_in + 1 # total dims with bias
 T = np.size(trace)
 dt = dfsamp
 #bias = npr.randn(T)
-nlfun = lambda x : softplus_stable(x, bias=None, dt=dt)
+#nlfun = lambda x : softplus_stable(x, bias=None, dt=dt)
 
 
 #Xstim = npr.randn(T,1)
-Xstim = np.expand_dims(xstimVec, axis =1 )
+Xstim = np.expand_dims(xstimVec_ori, axis =1 )
 from scipy.linalg import hankel
 Xmat1 = hankel(Xstim[:,0], Xstim[:,0][-D_in:])
 Xmat = np.hstack((np.ones((T,1)), Xmat1))
